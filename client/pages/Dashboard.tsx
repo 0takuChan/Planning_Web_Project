@@ -102,7 +102,7 @@ export default function Dashboard() {
                 {dueDates.length > 0 ? (
                   dueDates.map((d) => (
                     <div key={d.date.toISOString()}>
-                      {format(d.date, "MM/dd/yyyy")} <span className="text-slate-400">{d.count} {d.count === 1 ? "Order" : "Orders"}</span>
+                      {format(d.date, "dd/MM/yyyy")} <span className="text-slate-400">{d.count} {d.count === 1 ? "Order" : "Orders"}</span>
                     </div>
                   ))
                 ) : (
