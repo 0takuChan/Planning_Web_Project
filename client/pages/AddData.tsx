@@ -53,53 +53,61 @@ const emptyDraft = (): Row => ({
 const FormFields = ({
   values,
   onChange,
+  invalid,
 }: {
   values: Pick<Row, DataField>;
   onChange: (field: DataField, value: string | number) => void;
-}) => (
-  <div className="mt-6 space-y-4 text-sm">
-    <label className="flex flex-col gap-1 text-xs font-medium text-slate-500">
-      Job
-      <input
-        type="text"
-        className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm transition focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[hsl(var(--brand-start))]"
-        placeholder="Select Job"
-        value={values.job}
-        onChange={(e) => onChange("job", e.target.value)}
-      />
-    </label>
-    <label className="flex flex-col gap-1 text-xs font-medium text-slate-500">
-      Step
-      <input
-        type="text"
-        className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm transition focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[hsl(var(--brand-start))]"
-        placeholder="Select Step"
-        value={values.step}
-        onChange={(e) => onChange("step", e.target.value)}
-      />
-    </label>
-    <label className="flex flex-col gap-1 text-xs font-medium text-slate-500">
-      Quantity
-      <input
-        type="number"
-        className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm transition focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[hsl(var(--brand-start))]"
-        placeholder="Quantity"
-        value={values.quantity}
-        onChange={(e) => onChange("quantity", Number(e.target.value))}
-      />
-    </label>
-    <label className="flex flex-col gap-1 text-xs font-medium text-slate-500">
-      Recording date
-      <input
-        type="text"
-        className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm transition focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[hsl(var(--brand-start))]"
-        placeholder="DD/MM/YYYY"
-        value={values.recordedDate}
-        onChange={(e) => onChange("recordedDate", e.target.value)}
-      />
-    </label>
-  </div>
-);
+  invalid?: Partial<Record<DataField, boolean>>;
+}) => {
+  const base =
+    "rounded-lg border px-3 py-2 text-sm text-slate-700 shadow-sm transition focus:outline-none ";
+  const ok = "border-slate-200 focus:ring-2 focus:ring-[hsl(var(--brand-start))] focus:border-transparent";
+  const bad = "border-red-500 focus:ring-2 focus:ring-red-500";
+  return (
+    <div className="mt-6 space-y-4 text-sm">
+      <label className="flex flex-col gap-1 text-xs font-medium text-slate-500">
+        Job
+        <input
+          type="text"
+          className={`${base} ${invalid?.job ? bad : ok}`}
+          placeholder="Select Job"
+          value={values.job}
+          onChange={(e) => onChange("job", e.target.value)}
+        />
+      </label>
+      <label className="flex flex-col gap-1 text-xs font-medium text-slate-500">
+        Step
+        <input
+          type="text"
+          className={`${base} ${invalid?.step ? bad : ok}`}
+          placeholder="Select Step"
+          value={values.step}
+          onChange={(e) => onChange("step", e.target.value)}
+        />
+      </label>
+      <label className="flex flex-col gap-1 text-xs font-medium text-slate-500">
+        Quantity
+        <input
+          type="number"
+          className={`${base} ${invalid?.quantity ? bad : ok}`}
+          placeholder="Quantity"
+          value={values.quantity}
+          onChange={(e) => onChange("quantity", Number(e.target.value))}
+        />
+      </label>
+      <label className="flex flex-col gap-1 text-xs font-medium text-slate-500">
+        Recording date
+        <input
+          type="text"
+          className={`${base} ${invalid?.recordedDate ? bad : ok}`}
+          placeholder="DD/MM/YYYY"
+          value={values.recordedDate}
+          onChange={(e) => onChange("recordedDate", e.target.value)}
+        />
+      </label>
+    </div>
+  );
+};
 
 export default function AddData() {
   const [rows, setRows] = useState<Row[]>(init);
@@ -234,6 +242,12 @@ export default function AddData() {
                         quantity: draft.quantity,
                         recordedDate: draft.recordedDate,
                       }}
+                      invalid={{
+                        job: draft.job.trim() === "",
+                        step: draft.step.trim() === "",
+                        quantity: Number(draft.quantity) <= 0,
+                        recordedDate: draft.recordedDate.trim() === "",
+                      }}
                       onChange={(field, value) =>
                         setDraft((d) => ({ ...d, [field]: value }))
                       }
@@ -345,6 +359,12 @@ export default function AddData() {
                   step: editDraft.step,
                   quantity: editDraft.quantity,
                   recordedDate: editDraft.recordedDate,
+                }}
+                invalid={{
+                  job: editDraft.job.trim() === "",
+                  step: editDraft.step.trim() === "",
+                  quantity: Number(editDraft.quantity) <= 0,
+                  recordedDate: editDraft.recordedDate.trim() === "",
                 }}
                 onChange={(field, value) =>
                   setEditDraft((d) => ({ ...d, [field]: value }))

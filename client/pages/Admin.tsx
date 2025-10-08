@@ -135,43 +135,51 @@ const normalizeRoleLabel = (role: RoleKey, value: string): string => {
 const MemberFormFields = ({
   values,
   onChange,
+  invalid,
 }: {
   values: MemberFormValues;
   onChange: (field: MemberField, value: string) => void;
-}) => (
-  <div className="mt-6 space-y-4 text-sm">
-    <label className="flex flex-col gap-1 text-xs font-medium text-slate-500">
-      Name
-      <input
-        type="text"
-        className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm transition focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[hsl(var(--brand-start))]"
-        placeholder="Name"
-        value={values.name}
-        onChange={(event) => onChange("name", event.target.value)}
-      />
-    </label>
-    <label className="flex flex-col gap-1 text-xs font-medium text-slate-500">
-      Email
-      <input
-        type="email"
-        className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm transition focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[hsl(var(--brand-start))]"
-        placeholder="Email"
-        value={values.email}
-        onChange={(event) => onChange("email", event.target.value)}
-      />
-    </label>
-    <label className="flex flex-col gap-1 text-xs font-medium text-slate-500">
-      Phone Number
-      <input
-        type="tel"
-        className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm transition focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[hsl(var(--brand-start))]"
-        placeholder="Phone Number"
-        value={values.phone}
-        onChange={(event) => onChange("phone", event.target.value)}
-      />
-    </label>
-  </div>
-);
+  invalid?: Partial<Record<MemberField, boolean>>;
+}) => {
+  const base =
+    "rounded-lg border px-3 py-2 text-sm text-slate-700 shadow-sm transition focus:outline-none ";
+  const ok = "border-slate-200 focus:ring-2 focus:ring-[hsl(var(--brand-start))] focus:border-transparent";
+  const bad = "border-red-500 focus:ring-2 focus:ring-red-500";
+  return (
+    <div className="mt-6 space-y-4 text-sm">
+      <label className="flex flex-col gap-1 text-xs font-medium text-slate-500">
+        Name
+        <input
+          type="text"
+          className={`${base} ${invalid?.name ? bad : ok}`}
+          placeholder="Name"
+          value={values.name}
+          onChange={(event) => onChange("name", event.target.value)}
+        />
+      </label>
+      <label className="flex flex-col gap-1 text-xs font-medium text-slate-500">
+        Email
+        <input
+          type="email"
+          className={`${base} ${invalid?.email ? bad : ok}`}
+          placeholder="Email"
+          value={values.email}
+          onChange={(event) => onChange("email", event.target.value)}
+        />
+      </label>
+      <label className="flex flex-col gap-1 text-xs font-medium text-slate-500">
+        Phone Number
+        <input
+          type="tel"
+          className={`${base} ${invalid?.phone ? bad : ok}`}
+          placeholder="Phone Number"
+          value={values.phone}
+          onChange={(event) => onChange("phone", event.target.value)}
+        />
+      </label>
+    </div>
+  );
+};
 
 const computeCounts = (members: Member[]): Record<RoleKey, number> =>
   ROLE_OPTIONS.reduce((accumulator, role) => {
@@ -470,6 +478,11 @@ export default function Admin() {
                       </DialogHeader>
                       <MemberFormFields
                         values={draft}
+                        invalid={{
+                          name: draft.name.trim() === "",
+                          email: draft.email.trim() === "",
+                          phone: draft.phone.trim() === "",
+                        }}
                         onChange={(field, value) =>
                           setDraft((current) => ({ ...current, [field]: value }))
                         }
@@ -525,6 +538,11 @@ export default function Admin() {
                       </DialogHeader>
                       <MemberFormFields
                         values={editDraft}
+                        invalid={{
+                          name: editDraft.name.trim() === "",
+                          email: editDraft.email.trim() === "",
+                          phone: editDraft.phone.trim() === "",
+                        }}
                         onChange={(field, value) =>
                           setEditDraft((current) => ({ ...current, [field]: value }))
                         }
