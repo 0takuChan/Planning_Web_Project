@@ -1,5 +1,6 @@
 import AppLayout from "@/components/layout/AppLayout";
 import { useMemo, useState } from "react";
+import { init, Row } from "../shared/Api_Jobs";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -8,46 +9,40 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import {
+  Select,
+  SelectTrigger,
+  SelectContent,
+  SelectItem,
+  SelectValue,
+} from "@/components/ui/select";
+import { initialCustomers } from "../shared/Api_Customer";
+import { Calendar } from "lucide-react";
+import * as Popover from "@radix-ui/react-popover";
 
-interface Row {
-  customer: string;
-  job: string;
-  quantity: number;
-  date: string;
-  cutting: boolean;
-  heating: boolean;
-  embroidering: boolean;
-  sewing: boolean;
-  qc: boolean;
-  pack: boolean;
+
+function generateJobId(existing: string[]): string {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  let id = "";
+  let tries = 0;
+  do {
+    const time = Date.now().toString(); // milliseconds timestamp
+    id = `JO-${year}-${month}${day}${time}`;
+    tries++;
+    if (tries > 10) break; // ป้องกัน loop infinity (โอกาสซ้ำต่ำมาก)
+  } while (existing.includes(id));
+  return id;
 }
 
-const init: Row[] = [
-  {
-    customer: "Michael Johnson",
-    job: "JO-2025-0001",
-    quantity: 500,
-    date: "9/20/2025",
-    cutting: true,
-    heating: true,
-    embroidering: true,
-    sewing: true,
-    qc: true,
-    pack: true,
-  },
-  {
-    customer: "Sophia Brown",
-    job: "JO-2025-0012",
-    quantity: 300,
-    date: "9/21/2025",
-    cutting: true,
-    heating: true,
-    embroidering: false,
-    sewing: false,
-    qc: false,
-    pack: false,
-  },
-];
+// ฟังก์ชันแปลง yyyy-mm-dd เป็น dd/mm/yyyy
+function formatDateDMY(date: string) {
+  if (!date) return "";
+  const [y, m, d] = date.split("-");
+  return `${d}/${m}/${y}`;
+}
 
 export default function Jobs() {
   const [rows, setRows] = useState<Row[]>(init);
@@ -63,6 +58,7 @@ export default function Jobs() {
     sewing: false,
     qc: false,
     pack: false,
+    fabric: "",
   });
   const [editIndex, setEditIndex] = useState<number | null>(null);
   const [editDraft, setEditDraft] = useState<Row>({
@@ -76,6 +72,7 @@ export default function Jobs() {
     sewing: false,
     qc: false,
     pack: false,
+    fabric: "",
   });
   const [sort, setSort] = useState<{ key: keyof Row; dir: 1 | -1 }>({
     key: "customer",
@@ -87,7 +84,7 @@ export default function Jobs() {
       rows
         .slice()
         .sort((a, b) => (a[sort.key] > b[sort.key] ? 1 : -1) * sort.dir),
-    [rows, sort],
+    [rows, sort]
   );
   const th = (k: keyof Row, label: string) => (
     <th
@@ -104,7 +101,12 @@ export default function Jobs() {
   );
 
   const add = () => {
-    setRows((r) => r.concat(draft));
+    setRows((r) =>
+      r.concat({
+        ...draft,
+        date: formatDateDMY(draft.date), // แปลงวันที่ก่อนบันทึก
+      })
+    );
     setDraft({
       customer: "",
       job: "",
@@ -116,6 +118,7 @@ export default function Jobs() {
       sewing: false,
       qc: false,
       pack: false,
+      fabric: "",
     });
     setOpen(false);
   };
@@ -133,6 +136,53 @@ export default function Jobs() {
     setRows((r) => r.filter((_, idx) => idx !== editIndex));
     setEditIndex(null);
   };
+
+  // Check if editDraft is different from the original row
+  const isEditChanged =
+    editIndex !== null &&
+    (() => {
+      const original = rows[editIndex];
+      return (
+        original.customer !== editDraft.customer ||
+        original.job !== editDraft.job ||
+        original.quantity !== editDraft.quantity ||
+        original.date !== editDraft.date ||
+        original.cutting !== editDraft.cutting ||
+        original.heating !== editDraft.heating ||
+        original.embroidering !== editDraft.embroidering ||
+        original.sewing !== editDraft.sewing ||
+        original.qc !== editDraft.qc ||
+        original.pack !== editDraft.pack ||
+        original.fabric !== editDraft.fabric
+      );
+    })();
+
+  // สุ่ม job id อัตโนมัติหลังเลือก customer
+  const handleCustomerChange = (value: string) => {
+    const existingIds = rows.map((r) => r.job);
+    const newId = generateJobId(existingIds);
+    setDraft((prev) => ({
+      ...prev,
+      customer: value,
+      job: newId,
+    }));
+  };
+
+  // ตรวจสอบว่าข้อมูลครบหรือไม่ (รวม step ต้องเลือกอย่างน้อย 1 อัน)
+  const isAddValid =
+    draft.customer.trim() !== "" &&
+    draft.job.trim() !== "" &&
+    draft.quantity > 0 &&
+    draft.date.trim() !== "" &&
+    draft.fabric.trim() !== "" &&
+    (
+      draft.cutting ||
+      draft.heating ||
+      draft.embroidering ||
+      draft.sewing ||
+      draft.qc ||
+      draft.pack
+    );
 
   return (
     <AppLayout>
@@ -158,25 +208,24 @@ export default function Jobs() {
                         <label className="text-xs text-slate-500">
                           Customer
                         </label>
-                        <input
-                          className="mt-1 w-full border rounded px-3 py-2"
-                          placeholder="Select Customer"
+                        <select
+                          className="mt-1 w-full border rounded px-3 py-2 bg-white"
                           value={draft.customer}
-                          onChange={(e) =>
-                            setDraft({ ...draft, customer: e.target.value })
-                          }
-                        />
+                          onChange={(e) => handleCustomerChange(e.target.value)}
+                        >
+                          <option value="">Select Customer</option>
+                          {initialCustomers.map((c) => (
+                            <option key={c.id} value={c.name}>
+                              {c.name} ({c.location})
+                            </option>
+                          ))}
+                        </select>
                       </div>
                       <div>
                         <label className="text-xs text-slate-500">Job</label>
-                        <input
-                          className="mt-1 w-full border rounded px-3 py-2"
-                          placeholder="Job"
-                          value={draft.job}
-                          onChange={(e) =>
-                            setDraft({ ...draft, job: e.target.value })
-                          }
-                        />
+                        <div className="mt-1 w-full border rounded px-3 py-2 bg-gray-50 text-slate-700 select-none">
+                          {draft.job || "-"}
+                        </div>
                       </div>
                       <div>
                         <label className="text-xs text-slate-500">
@@ -195,16 +244,54 @@ export default function Jobs() {
                           }
                         />
                       </div>
+
+                      <div>
+                        <label className="text-xs text-slate-500">Fabric Type</label>
+                        <select
+                          className="mt-1 w-full border rounded px-3 py-2 bg-white"
+                          value={draft.fabric || ""}
+                          onChange={(e) =>
+                            setDraft({ ...draft, fabric: e.target.value })
+                          }
+                        >
+                          <option value="" disabled>
+                            Select Fabric Type
+                          </option>
+                          <option value="cotton">Cotton</option>
+                          <option value="polyester">Polyester</option>
+                          <option value="denim">Denim</option>
+                          <option value="silk">Silk</option>
+                          <option value="linen">Linen</option>
+                          <option value="wool">Wool</option>
+                          <option value="spandex">Spandex</option>
+                        </select>
+                      </div>
+
                       <div>
                         <label className="text-xs text-slate-500">Date</label>
-                        <input
-                          className="mt-1 w-full border rounded px-3 py-2"
-                          placeholder="Date"
-                          value={draft.date}
-                          onChange={(e) =>
-                            setDraft({ ...draft, date: e.target.value })
-                          }
-                        />
+                        <div className="relative">
+                          <input
+                            className="mt-1 w-full border rounded px-3 py-2 pr-10"
+                            type="date"
+                            value={draft.date}
+                            onChange={(e) =>
+                              setDraft({ ...draft, date: e.target.value })
+                            }
+                            id="job-date-input"
+                          />
+                          <button
+                            type="button"
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400"
+                            tabIndex={-1}
+                            onClick={() => {
+                              // focus input เมื่อคลิก icon
+                              const input = document.getElementById("job-date-input");
+                              if (input) input.focus();
+                            }}
+                            aria-label="Pick date"
+                          >
+                          </button>
+                        </div>
                       </div>
                       <div className="flex justify-end gap-2 pt-2">
                         <Button
@@ -213,7 +300,13 @@ export default function Jobs() {
                         >
                           Cancel
                         </Button>
-                        <Button onClick={add}>Add</Button>
+                        <Button
+                          onClick={add}
+                          disabled={!isAddValid}
+                          className={!isAddValid ? "opacity-50 cursor-not-allowed" : ""}
+                        >
+                          Add
+                        </Button>
                       </div>
                     </div>
                   </div>
@@ -264,36 +357,33 @@ export default function Jobs() {
                   {th("job", "Job")}
                   {th("quantity", "Quantity")}
                   {th("date", "Date")}
-                  <th>Cutting</th>
-                  <th>Heating</th>
-                  <th>Embroidering</th>
-                  <th>Sewing</th>
-                  <th>QC</th>
-                  <th>Pack</th>
+                  <th>Step</th>
+                  {th("fabric", "Fabric")}
                   <th className="text-right">Actions</th>
+
                 </tr>
               </thead>
               <tbody>
                 {sorted.map((r, i) => (
                   <tr key={i} className="border-t">
-                    <td className="py-2 font-medium text-slate-700">
-                      {r.customer}
-                    </td>
+                    <td className="py-2 font-medium text-slate-700">{r.customer}</td>
                     <td>{r.job}</td>
                     <td>{r.quantity}</td>
                     <td>{r.date}</td>
-                    {(
-                      [
-                        r.cutting,
-                        r.heating,
-                        r.embroidering,
-                        r.sewing,
-                        r.qc,
-                        r.pack,
-                      ] as boolean[]
-                    ).map((b, idx) => (
-                      <td key={idx}>{b ? "✔️" : "❌"}</td>
-                    ))}
+                    <td>
+                      {[
+                        { name: "Cutting", done: r.cutting },
+                        { name: "Heating", done: r.heating },
+                        { name: "Embroidering", done: r.embroidering },
+                        { name: "Sewing", done: r.sewing },
+                        { name: "QC", done: r.qc },
+                        { name: "Pack", done: r.pack },
+                      ]
+                        .filter((step) => step.done)
+                        .map((step) => step.name)
+                        .join(", ")}
+                    </td>
+                    <td className="capitalize">{r.fabric}</td>
                     <td className="text-right">
                       <Button
                         size="sm"
@@ -306,6 +396,7 @@ export default function Jobs() {
                   </tr>
                 ))}
               </tbody>
+
             </table>
           </div>
         </div>
@@ -326,25 +417,48 @@ export default function Jobs() {
               <div className="mt-4 space-y-3 text-sm">
                 <div>
                   <label className="text-xs text-slate-500">Customer</label>
-                  <input
-                    className="mt-1 w-full border rounded px-3 py-2"
-                    placeholder="Customer"
+                  <select
+                    className="mt-1 w-full border rounded px-3 py-2 bg-white"
                     value={editDraft.customer}
                     onChange={(e) =>
                       setEditDraft({ ...editDraft, customer: e.target.value })
                     }
-                  />
+                  >
+                    <option value="">Select Customer</option>
+                    {initialCustomers.map((c) => (
+                      <option key={c.id} value={c.name}>
+                        {c.name} ({c.location})
+                      </option>
+                    ))}
+                  </select>
                 </div>
                 <div>
                   <label className="text-xs text-slate-500">Job</label>
-                  <input
-                    className="mt-1 w-full border rounded px-3 py-2"
-                    placeholder="Job"
-                    value={editDraft.job}
-                    onChange={(e) =>
-                      setEditDraft({ ...editDraft, job: e.target.value })
+                  <div className="mt-1 w-full border rounded px-3 py-2 bg-gray-50 text-slate-700">
+                    {editDraft.job || "-"}
+                  </div>
+                </div>
+                <div>
+                  <label className="text-xs text-slate-500">Fabric Type</label>
+                  <Select
+                    value={editDraft.fabric}
+                    onValueChange={(value) =>
+                      setEditDraft({ ...editDraft, fabric: value })
                     }
-                  />
+                  >
+                    <SelectTrigger className="mt-1 w-full border rounded px-3 py-2 bg-white">
+                      <SelectValue placeholder="Select Fabric Type" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="cotton">Cotton</SelectItem>
+                      <SelectItem value="polyester">Polyester</SelectItem>
+                      <SelectItem value="denim">Denim</SelectItem>
+                      <SelectItem value="silk">Silk</SelectItem>
+                      <SelectItem value="linen">Linen</SelectItem>
+                      <SelectItem value="wool">Wool</SelectItem>
+                      <SelectItem value="spandex">Spandex</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div>
                   <label className="text-xs text-slate-500">Quantity</label>
@@ -363,14 +477,28 @@ export default function Jobs() {
                 </div>
                 <div>
                   <label className="text-xs text-slate-500">Date</label>
-                  <input
-                    className="mt-1 w-full border rounded px-3 py-2"
-                    placeholder="Date"
-                    value={editDraft.date}
-                    onChange={(e) =>
-                      setEditDraft({ ...editDraft, date: e.target.value })
-                    }
-                  />
+                  <div className="relative">
+                    <input
+                      className="mt-1 w-full border rounded px-3 py-2 pr-10"
+                      type="date"
+                      value={editDraft.date}
+                      onChange={(e) =>
+                        setEditDraft({ ...editDraft, date: e.target.value })
+                      }
+                      id="job-date-input"
+                    />
+                    <button
+                      type="button"
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400"
+                      tabIndex={-1}
+                      onClick={() => {
+                        const input = document.getElementById("job-date-input");
+                        if (input) input.focus();
+                      }}
+                      aria-label="Pick date"
+                    >
+                    </button>
+                  </div>
                 </div>
                 <div className="flex justify-between gap-2 pt-2">
                   <Button variant="destructive" onClick={deleteRow}>
@@ -383,7 +511,13 @@ export default function Jobs() {
                     >
                       Cancel
                     </Button>
-                    <Button onClick={saveEdit}>Update</Button>
+                    <Button
+                      onClick={saveEdit}
+                      disabled={!isEditChanged}
+                      className={!isEditChanged ? "opacity-50 cursor-not-allowed" : ""}
+                    >
+                      Update
+                    </Button>
                   </div>
                 </div>
               </div>

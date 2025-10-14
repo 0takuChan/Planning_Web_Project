@@ -20,11 +20,12 @@ import {
   Star,
 } from "lucide-react";
 import "@/styles/dashboard.css";
+import { init, Row } from "../shared/Api_Jobs";
 
 interface JobRow {
   id: string;
   quantity: number;
-  date: string; // ISO date
+  date: string; 
   cutting: number;
   heating: number;
   embroidering: number;
@@ -34,56 +35,47 @@ interface JobRow {
   state: "Done" | "In Progress" | "Delay";
 }
 
-const sampleJobs: JobRow[] = [
-  {
-    id: "JO-2025-0001",
-    quantity: 500,
-    date: "2025-09-20",
-    cutting: 500,
-    heating: 500,
-    embroidering: 500,
-    sewing: 500,
-    qc: 500,
-    packing: 500,
-    state: "Done",
-  },
-  {
-    id: "JO-2025-0012",
-    quantity: 300,
-    date: "2025-09-21",
-    cutting: 200,
-    heating: 180,
-    embroidering: 150,
-    sewing: 120,
-    qc: 0,
-    packing: 0,
-    state: "In Progress",
-  },
-  {
-    id: "JO-2025-0034",
-    quantity: 250,
-    date: "2025-09-23",
-    cutting: 250,
-    heating: 230,
-    embroidering: 220,
-    sewing: 0,
-    qc: 0,
-    packing: 0,
-    state: "Delay",
-  },
-  {
-    id: "JO-2025-0041",
-    quantity: 150,
-    date: "2025-09-19",
-    cutting: 120,
-    heating: 100,
-    embroidering: 100,
-    sewing: 0,
-    qc: 0,
-    packing: 0,
-    state: "In Progress",
-  },
-];
+function formatDate(date: string) {
+  const [m, d, y] = date.split("/");
+  return `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
+}
+
+function rowToJob(row: Row): JobRow {
+  let state: JobRow["state"] = "In Progress";
+  if (
+    row.cutting &&
+    row.heating &&
+    row.embroidering &&
+    row.sewing &&
+    row.qc &&
+    row.pack
+  ) {
+    state = "Done";
+  } else if (
+    !row.cutting &&
+    !row.heating &&
+    !row.embroidering &&
+    !row.sewing &&
+    !row.qc &&
+    !row.pack
+  ) {
+    state = "Delay";
+  }
+  return {
+    id: row.job,
+    quantity: row.quantity,
+    date: formatDate(row.date),
+    cutting: row.cutting ? row.quantity : 0,
+    heating: row.heating ? row.quantity : 0,
+    embroidering: row.embroidering ? row.quantity : 0,
+    sewing: row.sewing ? row.quantity : 0,
+    qc: row.qc ? row.quantity : 0,
+    packing: row.pack ? row.quantity : 0,
+    state,
+  };
+}
+
+const sampleJobs: JobRow[] = init.map(rowToJob);
 
 const statusStyles: Record<
   JobRow["state"],

@@ -5,10 +5,11 @@ export type Step = { key: string; color: string };
 export type StepEvent = {
   id: string;
   step: string;
-  day: number;
+  day: number;      // ยังใช้สำหรับ popup
   jobId: string;
   qty: number;
   color?: string;
+  date: string;     // yyyy-MM-dd ใช้สำหรับแสดงใน grid
 };
 
 interface Props {
@@ -17,7 +18,7 @@ interface Props {
   startDate?: Date;
   onDrop?: (info: { step: string; day: number; jobId: string }) => void;
   onAskQuantity?: (
-    info: { step: string; day: number; jobId: string },
+    info: { step: string; day: number; jobId: string; date: string }, // <-- Add 'date'
     anchor: {
       left: number;
       top: number;
@@ -67,7 +68,14 @@ export default function StepWeekGrid({
     const headerRect = headerEl?.getBoundingClientRect();
     if (onAskQuantity && headerRect && containerRect) {
       onAskQuantity(
-        { step, day: target.day, jobId },
+        {
+          step,
+          day: target.day,
+          jobId,
+          date: startDate
+            ? format(addDays(startDate, target.day - 1), "yyyy-MM-dd")
+            : "",
+        },
         {
           left: headerRect.left,
           top: headerRect.bottom,
@@ -79,6 +87,21 @@ export default function StepWeekGrid({
       onDrop({ step, day: target.day, jobId });
     }
   };
+
+  // Render grid
+  for (let row = 0; row < steps.length; row++) {
+    for (let col = 0; col < 7; col++) {
+      const cellDate = startDate
+        ? format(addDays(startDate, col), "yyyy-MM-dd")
+        : "";
+      const eventsInCell = events.filter(
+        (ev) =>
+          ev.step === steps[row].key &&
+          ev.date === cellDate
+      );
+      // ...render eventsInCell ใน cell นี้...
+    }
+  }
 
   return (
     <div ref={containerRef} className="w-full step-week-grid">
@@ -106,8 +129,11 @@ export default function StepWeekGrid({
               {s.key}
             </div>
             {days.map((d) => {
+              const cellDate = startDate
+                ? format(addDays(startDate, d - 1), "yyyy-MM-dd")
+                : "";
               const cellEvents = events.filter(
-                (ev) => ev.step === s.key && ev.day === d,
+                (ev) => ev.step === s.key && ev.date === cellDate
               );
               return (
                 <div

@@ -19,6 +19,8 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import "@/styles/planning.css";
+import { init as jobRows } from "../shared/Api_Jobs"; // ใช้ api jobs ที่ถูกต้อง
+import { planningApi, PlanningRecord } from "../shared/Api_Planning";
 
 interface JobItem {
   id: string;
@@ -26,12 +28,14 @@ interface JobItem {
   due: string;
 }
 
-const initialJobs: JobItem[] = [
-  { id: "JO-2025-2323", quantity: 100, due: "2025-09-20" },
-  { id: "JO-2025-3234", quantity: 250, due: "2025-09-20" },
-  { id: "JO-2025-0034", quantity: 80, due: "2025-09-20" },
-  { id: "JO-2025-0041", quantity: 190, due: "2025-09-20" },
-];
+const initialJobs: JobItem[] = jobRows.map((job) => ({
+  id: job.job,
+  quantity: job.quantity,
+  due: (() => {
+    const [m, d, y] = job.date.split("/");
+    return `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
+  })(),
+}));
 
 const stepPalette = [
   { key: "Cutting", color: "#86efac" },
@@ -49,6 +53,7 @@ export default function Planning() {
     step: string;
     day: number;
     jobId: string;
+    date: string;
     left: number;
     top: number;
     containerLeft: number;
@@ -92,7 +97,7 @@ export default function Planning() {
   };
 
   const askQuantity = (
-    info: { step: string; day: number; jobId: string },
+    info: { step: string; day: number; jobId: string; date: string }, // เพิ่ม date
     anchor: {
       left: number;
       top: number;
@@ -113,7 +118,7 @@ export default function Planning() {
       );
     }
     setQtyPopup({
-      ...info,
+      ...info, // มี date ด้วย
       left,
       top: anchor.top,
       containerLeft: anchor.containerLeft,
@@ -128,14 +133,22 @@ export default function Planning() {
     const color = stepPalette.find((s) => s.key === qtyPopup.step)?.color;
     setEvents((prev) =>
       prev.concat({
-        id: `${qtyPopup.jobId}-${qtyPopup.step}-d${qtyPopup.day}-${prev.length}`,
+        id: `${qtyPopup.jobId}-${qtyPopup.step}-${qtyPopup.date}-${prev.length}`,
         step: qtyPopup.step,
         day: qtyPopup.day,
         jobId: qtyPopup.jobId,
         qty,
         color,
+        date: qtyPopup.date,
       }),
     );
+    // เพิ่มบันทึกลง planningApi พร้อม step
+    planningApi.push({
+      jobId: qtyPopup.jobId,
+      date: qtyPopup.date,
+      qty,
+      step: qtyPopup.step, // เพิ่ม step
+    });
     setQtyPopup(null);
   };
 
@@ -330,7 +343,9 @@ export default function Planning() {
                             {stepPalette
                               .filter(
                                 (s) =>
-                                  calcRemainingStep(selected.id, s.key) > 0,
+                                  // เฉพาะ step ที่ job นี้มีจริง
+                                  (jobRows.find((j) => j.job === selected.id)?.[s.key.toLowerCase()] === true) &&
+                                  calcRemainingStep(selected.id, s.key) > 0
                               )
                               .map((s) => (
                                 <div
@@ -338,10 +353,7 @@ export default function Planning() {
                                   draggable
                                   onDragStart={(e) => {
                                     e.dataTransfer.setData("text/step", s.key);
-                                    e.dataTransfer.setData(
-                                      "text/job",
-                                      selected.id,
-                                    );
+                                    e.dataTransfer.setData("text/job", selected.id);
                                   }}
                                   className="cursor-move rounded px-2 py-1 text-xs text-white"
                                   style={{ backgroundColor: s.color }}
@@ -350,7 +362,9 @@ export default function Planning() {
                                 </div>
                               ))}
                             {stepPalette.filter(
-                              (s) => calcRemainingStep(selected.id, s.key) > 0,
+                              (s) =>
+                                (jobRows.find((j) => j.job === selected.id)?.[s.key.toLowerCase()] === true) &&
+                                calcRemainingStep(selected.id, s.key) > 0
                             ).length === 0 && (
                               <div className="text-xs text-emerald-600">
                                 จัดครบแล้ว
@@ -382,6 +396,36 @@ export default function Planning() {
                 ))}
             </div>
           </div>
+        </div>
+        <div className="mt-8 rounded-lg border bg-white p-4">
+          <div className="font-semibold mb-2">Planning Records</div>
+          <table className="w-full text-sm border">
+            <thead>
+              <tr className="bg-slate-100">
+                <th className="px-2 py-1 border">Job ID</th>
+                <th className="px-2 py-1 border">Step</th>
+                <th className="px-2 py-1 border">Date</th>
+                <th className="px-2 py-1 border">Quantity</th>
+              </tr>
+            </thead>
+            <tbody>
+              {planningApi.map((rec, i) => (
+                <tr key={i}>
+                  <td className="px-2 py-1 border">{rec.jobId}</td>
+                  <td className="px-2 py-1 border">{rec.step}</td>
+                  <td className="px-2 py-1 border">{rec.date}</td>
+                  <td className="px-2 py-1 border">{rec.qty}</td>
+                </tr>
+              ))}
+              {planningApi.length === 0 && (
+                <tr>
+                  <td colSpan={4} className="text-center text-slate-400 py-2">
+                    No planning records yet.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
         </div>
       </div>
     </AppLayout>

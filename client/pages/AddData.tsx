@@ -10,36 +10,17 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { LayoutGrid } from "lucide-react";
-
-interface Row {
-  job: string;
-  quantity: number;
-  step: string;
-  recordedDate: string;
-  dueDate: string;
-  recorder: string;
-}
-
-const init: Row[] = [
-  {
-    job: "JO-2025-0001",
-    quantity: 150,
-    step: "Cutting",
-    recordedDate: "08/05/2025",
-    dueDate: "09/18/2025",
-    recorder: "tester 007",
-  },
-  {
-    job: "JO-2025-0012",
-    quantity: 250,
-    step: "QC",
-    recordedDate: "08/13/2025",
-    dueDate: "09/20/2025",
-    recorder: "tester 002",
-  },
-];
+import { init as jobRows } from "../shared/Api_Jobs"; // import jobs ที่มีอยู่
+import { init, Row } from "../shared/Api_Recroded";
 
 type DataField = "job" | "step" | "quantity" | "recordedDate";
+
+type FormFieldsProps = {
+  values: Pick<Row, DataField>;
+  onChange: (field: DataField, value: string | number) => void;
+  invalid?: Partial<Record<DataField, boolean>>;
+  mode?: "add" | "edit";
+};
 
 const emptyDraft = (): Row => ({
   job: "",
@@ -50,41 +31,90 @@ const emptyDraft = (): Row => ({
   recorder: "",
 });
 
+// Utility: แปลง job object เป็น array ของ step ที่มีจริง
+const getStepsForJob = (job: typeof jobRows[number]) => {
+  const stepMap: Record<string, keyof typeof job> = {
+    Cutting: "cutting",
+    Heating: "heating",
+    Embroidering: "embroidering",
+    Sewing: "sewing",
+    QC: "qc",
+    Pack: "pack",
+  };
+  return Object.entries(stepMap)
+    .filter(([_, key]) => job[key])
+    .map(([label]) => label);
+};
+
 const FormFields = ({
   values,
   onChange,
   invalid,
-}: {
-  values: Pick<Row, DataField>;
-  onChange: (field: DataField, value: string | number) => void;
-  invalid?: Partial<Record<DataField, boolean>>;
-}) => {
+  mode = "add",
+}: FormFieldsProps) => {
   const base =
     "rounded-lg border px-3 py-2 text-sm text-slate-700 shadow-sm transition focus:outline-none ";
-  const ok = "border-slate-200 focus:ring-2 focus:ring-[hsl(var(--brand-start))] focus:border-transparent";
+  const ok =
+    "border-slate-200 focus:ring-2 focus:ring-[hsl(var(--brand-start))] focus:border-transparent";
   const bad = "border-red-500 focus:ring-2 focus:ring-red-500";
+
+  // หา steps ของ job ที่เลือก
+  const selectedJob = jobRows.find((job) => job.job === values.job);
+  const steps: string[] = selectedJob ? getStepsForJob(selectedJob) : [];
+
   return (
     <div className="mt-6 space-y-4 text-sm">
       <label className="flex flex-col gap-1 text-xs font-medium text-slate-500">
         Job
-        <input
-          type="text"
-          className={`${base} ${invalid?.job ? bad : ok}`}
-          placeholder="Select Job"
-          value={values.job}
-          onChange={(e) => onChange("job", e.target.value)}
-        />
+        {mode === "edit" ? (
+          <div className="rounded-lg border px-3 py-2 text-sm text-slate-700 bg-gray-50">
+            {values.job || "-"}
+          </div>
+        ) : (
+          <select
+            className={`${base} ${invalid?.job ? bad : ok}`}
+            value={values.job}
+            onChange={(e) => onChange("job", e.target.value)}
+          >
+            <option value="">Select Job</option>
+            {jobRows.map((job) => (
+              <option key={job.job} value={job.job}>
+                {job.job} {job.customer ? `- ${job.customer}` : ""}
+              </option>
+            ))}
+          </select>
+        )}
       </label>
+
       <label className="flex flex-col gap-1 text-xs font-medium text-slate-500">
         Step
-        <input
-          type="text"
-          className={`${base} ${invalid?.step ? bad : ok}`}
-          placeholder="Select Step"
-          value={values.step}
-          onChange={(e) => onChange("step", e.target.value)}
-        />
+        {mode === "edit" || !steps.length ? (
+          <input
+            type="text"
+            className={`${base} ${invalid?.step ? bad : ok}`}
+            placeholder="Select Step"
+            value={values.step}
+            onChange={(e) => onChange("step", e.target.value)}
+            disabled={mode === "edit"}
+          />
+        ) : (
+          <select
+            className={`${base} ${invalid?.step ? bad : ok}`}
+            value={values.step}
+            onChange={(e) => onChange("step", e.target.value)}
+            disabled={!values.job}
+          >
+            <option value="">Select Step</option>
+            {steps.map((step) => (
+              <option key={step} value={step}>
+                {step}
+              </option>
+            ))}
+          </select>
+        )}
       </label>
+
+      {/* Quantity, Recording date */}
       <label className="flex flex-col gap-1 text-xs font-medium text-slate-500">
         Quantity
         <input
@@ -236,6 +266,7 @@ export default function AddData() {
                     </DialogHeader>
 
                     <FormFields
+                      mode="add"
                       values={{
                         job: draft.job,
                         step: draft.step,
@@ -252,6 +283,7 @@ export default function AddData() {
                         setDraft((d) => ({ ...d, [field]: value }))
                       }
                     />
+
 
                     <div className="mt-8 flex justify-end gap-3">
                       <Button
@@ -354,6 +386,7 @@ export default function AddData() {
               </DialogHeader>
 
               <FormFields
+                mode="edit"
                 values={{
                   job: editDraft.job,
                   step: editDraft.step,
@@ -370,6 +403,7 @@ export default function AddData() {
                   setEditDraft((d) => ({ ...d, [field]: value }))
                 }
               />
+
 
               <div className="mt-8 flex flex-col-reverse justify-between gap-3 md:flex-row md:items-center">
                 <Button variant="destructive" onClick={remove} type="button">

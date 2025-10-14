@@ -2,15 +2,11 @@ import { useMemo, useState } from "react";
 import AppLayout from "@/components/layout/AppLayout";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-
-interface Customer { id: string; name: string; phone: string; email: string; location: string; orders: number }
+import { initialCustomers, Customer } from "../shared/Api_Customer";
 
 type CustomerDraft = Omit<Customer, "id">;
 
-const initial: Customer[] = [
-  { id: "00010234", name: "Michael Johnson", phone: "098-999-5689", email: "michael@gmail.com", location: "New York, USA", orders: 2 },
-  { id: "00056789", name: "Emily Davis", phone: "098-2266-554", email: "emily@gmail.com", location: "London, UK", orders: 1 },
-];
+
 
 const generateUniqueId = (existing: Set<string>): string => {
   let id = "";
@@ -21,7 +17,7 @@ const generateUniqueId = (existing: Set<string>): string => {
 };
 
 export default function Customers() {
-  const [rows, setRows] = useState<Customer[]>(initial);
+   const [rows, setRows] = useState<Customer[]>(initialCustomers);
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<CustomerDraft>({ name: "", phone: "", email: "", location: "", orders: 0 });
   const [editIndex, setEditIndex] = useState<number | null>(null);
