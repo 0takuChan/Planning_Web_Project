@@ -1,0 +1,117 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Role {
+  role_id   Int      @id @default(autoincrement())
+  role_name String   @unique @db.VarChar(50)
+
+  employees Employee[]
+}
+
+model Employee {
+  employee_id Int      @id @default(autoincrement())
+  fullname    String   @db.VarChar(100)
+  username    String   @unique @db.VarChar(50)
+  password    String   @db.VarChar(255)
+  email       String   @db.VarChar(100)
+  phone       String   @db.VarChar(15)
+  role_id     Int
+
+  role        Role     @relation(fields: [role_id], references: [role_id])
+  jobs        Job[]
+  productionLogs ProductionLog[]
+}
+
+model Customer {
+  customer_id   Int      @id @default(autoincrement())
+  customer_code String   @unique @db.VarChar(20)
+  fullname      String   @db.VarChar(100)
+  email         String   @db.VarChar(100)
+  phone         String   @db.VarChar(15)
+  address_detail String  @db.Text
+
+  jobs Job[]
+}
+
+model Job {
+  job_id           Int      @id @default(autoincrement())
+  job_number       String   @unique @db.VarChar(20)
+  created_date     DateTime @db.Date
+  end_date         DateTime @db.Date
+  customer_id      Int
+  total_quantity   Int
+  clothing_type    String   @db.VarChar(50)
+  type_of_fabric   String   @db.VarChar(50)
+  employee_id      Int
+  delivery_location String  @db.VarChar(255)
+
+  customer Customer @relation(fields: [customer_id], references: [customer_id])
+  employee Employee @relation(fields: [employee_id], references: [employee_id])
+
+  jobSteps  JobStep[]
+  plannings Planning[]
+  productionLogs ProductionLog[]
+}
+
+model Step {
+  step_id   Int      @id @default(autoincrement())
+  step_name String   @unique @db.VarChar(50)
+
+  jobSteps  JobStep[]
+}
+
+model JobStep {
+  job_step_id Int  @id @default(autoincrement())
+  job_id      Int
+  step_id     Int
+
+  job  Job  @relation(fields: [job_id], references: [job_id])
+  step Step @relation(fields: [step_id], references: [step_id])
+
+  plannings     Planning[]
+  productionLogs ProductionLog[]
+
+  @@unique([job_id, step_id])
+}
+
+model Planning {
+  planning_id      Int      @id @default(autoincrement())
+  job_id           Int
+  job_step_id      Int
+  planned_date     DateTime @unique @db.Date
+  planned_quantity Int
+
+  job     Job     @relation(fields: [job_id], references: [job_id])
+  jobStep JobStep @relation(fields: [job_step_id], references: [job_step_id])
+
+  @@unique([job_id, job_step_id])
+}
+
+model ProductionLog {
+  log_id       Int      @id @default(autoincrement())
+  job_id       Int
+  job_step_id  Int
+  log_date     DateTime @db.Date
+  actual_date  DateTime @unique @db.Date
+  quantity     Int
+  employee_id  Int
+
+  job       Job       @relation(fields: [job_id], references: [job_id])
+  jobStep   JobStep   @relation(fields: [job_step_id], references: [job_step_id])
+  employee  Employee  @relation(fields: [employee_id], references: [employee_id])
+
+  @@unique([job_id, job_step_id])
+}
