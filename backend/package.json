@@ -1,4 +1,5 @@
 {
+  "type": "module",
   "name": "backend",
   "version": "1.0.0",
   "description": "",
@@ -7,6 +8,9 @@
     "dev": "nodemon -- ext ts -- exec ts-node src/index.ts",
     "test": "echo \"Error: no test specified\" && exit 1",
     "db:migrate": "npx prisma migrate dev"
+  },
+  "prisma": {
+    "seed": "node prisma/seed.js"
   },
   "keywords": [],
   "author": "",
@@ -22,7 +26,8 @@
     "typescript": "^5.9.3"
   },
   "dependencies": {
-    "@prisma/client": "^6.17.0",
+    "@prisma/client": "^6.17.1",
+    "body-parser": "^2.2.0",
     "express": "^5.1.0",
     "ngrok": "^5.0.0-beta.2"
   }
