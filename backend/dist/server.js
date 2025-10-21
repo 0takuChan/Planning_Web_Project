@@ -1,0 +1,32 @@
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = __importDefault(require("express"));
+const body_parser_1 = __importDefault(require("body-parser"));
+const employee_js_1 = __importDefault(require("./routes/employee.js"));
+const customer_js_1 = __importDefault(require("./routes/customer.js"));
+const job_js_1 = __importDefault(require("./routes/job.js"));
+const jobStep_js_1 = __importDefault(require("./routes/jobStep.js"));
+const planning_js_1 = __importDefault(require("./routes/planning.js"));
+const productionLog_js_1 = __importDefault(require("./routes/productionLog.js"));
+const role_js_1 = __importDefault(require("./routes/role.js"));
+const step_js_1 = __importDefault(require("./routes/step.js"));
+const auth_js_1 = __importDefault(require("./routes/auth.js"));
+const dotenv_1 = __importDefault(require("dotenv"));
+dotenv_1.default.config();
+const app = (0, express_1.default)();
+app.use(body_parser_1.default.json());
+// ใช้งาน router
+app.use("/api/employee", employee_js_1.default);
+app.use("/api/customers", customer_js_1.default);
+app.use("/api/jobs", job_js_1.default);
+app.use("/api/jobsteps", jobStep_js_1.default);
+app.use("/api/plannings", planning_js_1.default);
+app.use("/api/productionlogs", productionLog_js_1.default);
+app.use("/api/roles", role_js_1.default);
+app.use("/api/steps", step_js_1.default);
+app.use("/api/auth", auth_js_1.default);
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
