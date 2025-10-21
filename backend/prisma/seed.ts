@@ -2,7 +2,7 @@ import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
-async function main() {
+async function main(): Promise<void> {
   // --- Role ---
   const roles = [
     { role_name: 'Admin' },
@@ -37,7 +37,27 @@ async function main() {
     });
   }
 
-  console.log(' Seed data inserted successfully!');
+  // --- Admin ---
+  const adminRole = await prisma.role.findUnique({
+    where: { role_name: 'Admin' },
+  });
+
+  if (adminRole) {
+    await prisma.employee.upsert({
+      where: { username: 'admin' },
+      update: {},
+      create: {
+        fullname: 'System Administrator',
+        username: 'admin',
+        password: '123456',
+        email: 'admin@example.com',
+        phone: '0989987887',
+        role_id: adminRole.role_id,
+      },
+    });
+  }
+
+  console.log('Seed data inserted successfully!');
 }
 
 main()
@@ -45,7 +65,7 @@ main()
     await prisma.$disconnect();
   })
   .catch(async (e) => {
-    console.error(e);
+    console.error('Error seeding data:', e);
     await prisma.$disconnect();
     process.exit(1);
   });
