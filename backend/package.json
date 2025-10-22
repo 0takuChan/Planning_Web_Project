@@ -12,6 +12,7 @@
     "anymatch": "^3.1.3",
     "arg": "^4.1.3",
     "balanced-match": "^1.0.2",
+    "bcrypt": "^6.0.0",
     "bcryptjs": "^3.0.2",
     "binary-extensions": "^2.3.0",
     "body-parser": "^2.2.0",
@@ -177,6 +178,7 @@
   "license": "ISC",
   "description": "",
   "devDependencies": {
+    "@types/bcrypt": "^6.0.0",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.3",
     "@types/node": "^24.9.1",
