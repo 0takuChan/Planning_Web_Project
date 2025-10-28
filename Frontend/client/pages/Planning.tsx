@@ -1,5 +1,5 @@
 import { useState } from "react";
-import AppLayout from "@/components/layout/AppLayout";
+import AppLayout from "@/components/layout/Sidebar";
 import {
   addWeeks,
   addDays,
@@ -19,8 +19,9 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import "@/styles/planning.css";
-import { init as jobRows } from "../shared/Api_Jobs"; // ใช้ api jobs ที่ถูกต้อง
+import { init as jobRows } from "../shared/Api_Jobs";
 import { planningApi, PlanningRecord } from "../shared/Api_Planning";
+import { usePermissions } from "@/App";
 
 interface JobItem {
   id: string;
@@ -47,6 +48,9 @@ const stepPalette = [
 ];
 
 export default function Planning() {
+  const { canEdit } = usePermissions();
+  const canEditPage = canEdit("/planning");
+
   const [events, setEvents] = useState<StepEvent[]>([]);
   const [selected, setSelected] = useState<JobItem | null>(null);
   const [qtyPopup, setQtyPopup] = useState<null | {
@@ -96,8 +100,9 @@ export default function Planning() {
     });
   };
 
+  // Modify askQuantity to check permission
   const askQuantity = (
-    info: { step: string; day: number; jobId: string; date: string }, // เพิ่ม date
+    info: { step: string; day: number; jobId: string; date: string },
     anchor: {
       left: number;
       top: number;
@@ -105,6 +110,8 @@ export default function Planning() {
       containerRight: number;
     },
   ) => {
+    if (!canEditPage) return; // ถ้าไม่มีสิทธิ์ไม่ให้เปิด popup
+    
     const remainingStep = calcRemainingStep(info.jobId, info.step);
     if (remainingStep <= 0) return;
     setQtyDraft(remainingStep);
@@ -118,8 +125,8 @@ export default function Planning() {
       );
     }
     setQtyPopup({
-      ...info, // มี date ด้วย
-      left,
+      ...info,
+      left: anchor.left,
       top: anchor.top,
       containerLeft: anchor.containerLeft,
       containerRight: anchor.containerRight,
@@ -127,6 +134,7 @@ export default function Planning() {
   };
 
   const confirmQty = () => {
+    if (!canEditPage || !qtyPopup) return;   // ปิดการยืนยัน
     if (!qtyPopup) return;
     const remainingStep = calcRemainingStep(qtyPopup.jobId, qtyPopup.step);
     const qty = Math.min(Math.max(1, qtyDraft), remainingStep);
@@ -152,7 +160,8 @@ export default function Planning() {
     setQtyPopup(null);
   };
 
-  const removeEvent = (id: string) =>
+  const removeEvent = (id: string) => {
+    if (!canEditPage) return;                // ปิดการลบ event
     setEvents((prev) => {
       const ev = prev.find((e) => e.id === id);
       const next = prev.filter((e) => e.id !== id);
@@ -167,6 +176,7 @@ export default function Planning() {
       }
       return next;
     });
+  };
 
   const [weekStart, setWeekStart] = useState<Date>(
     startOfWeek(parseISO("2025-09-01"), { weekStartsOn: 0 }),
@@ -272,8 +282,13 @@ export default function Planning() {
                       >
                         Cancel
                       </Button>
-                      <Button size="sm" onClick={confirmQty}>
-                        OK
+                      <Button
+                        size="sm"
+                        onClick={confirmQty}
+                        disabled={!canEditPage || qtyDraft <= 0}
+                        className="w-full"
+                      >
+                        Confirm
                       </Button>
                     </div>
                   </div>
@@ -286,14 +301,23 @@ export default function Planning() {
                 >
                   <div className="rounded-lg border bg-white p-2 shadow-xl">
                     <Button
-                      size="sm"
                       variant="destructive"
+                      size="sm"
                       onClick={() => {
                         removeEvent(deletePopup.id);
                         setDeletePopup(null);
                       }}
+                      disabled={!canEditPage}                        // ปิดการลบ
                     >
-                      X
+                      Delete
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setDeletePopup(null)}
+                      className="ml-1"
+                    >
+                      Cancel
                     </Button>
                   </div>
                 </div>

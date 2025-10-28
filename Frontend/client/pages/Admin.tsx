@@ -1,18 +1,16 @@
-import { useMemo, useState } from "react";
-import { UserPen, UserPlus } from "lucide-react";
-
-import AppLayout from "@/components/layout/AppLayout";
+import { useEffect, useMemo, useState } from "react";
+import Sidebar from "@/components/layout/Sidebar";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
+import { RoleSelector } from "@/components/Admin/RoleSelector";
+import { MemberListItem } from "@/components/Admin/MemberListItem";
+import { AddMemberDialog } from "@/components/Admin/AddMemberDialog";
+import { EditMemberDialog } from "@/components/Admin/EditMemberDialog";
+import { DeleteConfirmDialog } from "@/components/Admin/DeleteConfirmDialog";
+import { getCurrentUserRole } from "@/lib/auth";
+import { validateEmail, validatePhone, validatePassword, validateUsername } from "@/lib/validation";
 
 interface Member {
+  id: number;
   name: string;
   email: string;
   phone: string;
@@ -20,22 +18,28 @@ interface Member {
 }
 
 type RoleKey = "admin" | "planner" | "orderer" | "recorder";
-type PermissionLevel = "Read" | "Write" | "Manage";
 
 interface RoleSettings {
   label: string;
-  permission: PermissionLevel;
+}
+
+interface RoleApi {
+  role_id: number;
+  role_name: string;
 }
 
 type RoleSettingsMap = Record<RoleKey, RoleSettings>;
 
-type MemberFormValues = Pick<Member, "name" | "email" | "phone">;
-
-type MemberField = keyof MemberFormValues;
+type MemberFormValues = {
+  username: string;
+  name: string;
+  email: string;
+  phone: string;
+  password: string;
+  confirmPassword: string;
+};
 
 const ROLE_OPTIONS: RoleKey[] = ["admin", "planner", "orderer", "recorder"];
-
-const PERMISSION_OPTIONS: PermissionLevel[] = ["Read", "Write", "Manage"];
 
 const ROLE_DEFAULT_LABELS: Record<RoleKey, string> = {
   admin: "Admin",
@@ -44,45 +48,21 @@ const ROLE_DEFAULT_LABELS: Record<RoleKey, string> = {
   recorder: "Recorder",
 };
 
-const INITIAL_ROLE_SETTINGS: RoleSettingsMap = {
-  admin: { label: ROLE_DEFAULT_LABELS.admin, permission: "Manage" },
-  planner: { label: ROLE_DEFAULT_LABELS.planner, permission: "Write" },
-  orderer: { label: ROLE_DEFAULT_LABELS.orderer, permission: "Read" },
-  recorder: { label: ROLE_DEFAULT_LABELS.recorder, permission: "Read" },
-};
+const getDefaultRoleSettings = (): RoleSettingsMap =>
+  ROLE_OPTIONS.reduce((accumulator, role) => {
+    accumulator[role] = {
+      label: ROLE_DEFAULT_LABELS[role],
+    };
+    return accumulator;
+  }, {} as RoleSettingsMap);
 
-const initialMembers: Member[] = [
-  {
-    name: "Admin 01",
-    email: "admin01@example.com",
-    phone: "081-000-0001",
-    role: "admin",
-  },
-  {
-    name: "Tester 01",
-    email: "tester01@example.com",
-    phone: "081-000-0002",
-    role: "planner",
-  },
-  {
-    name: "Tester 02",
-    email: "tester02@example.com",
-    phone: "081-000-0003",
-    role: "planner",
-  },
-  {
-    name: "Tester 03",
-    email: "tester03@example.com",
-    phone: "081-000-0004",
-    role: "recorder",
-  },
-];
-
-const createEmptyMember = (role: RoleKey): Member => ({
+const createEmptyMemberFormValues = (): MemberFormValues => ({
+  username: "",
   name: "",
   email: "",
   phone: "",
-  role,
+  password: "",
+  confirmPassword: "",
 });
 
 const cloneMembers = (members: Member[]): Member[] =>
@@ -117,104 +97,39 @@ const roleSettingsEqual = (
   second: RoleSettingsMap,
 ): boolean =>
   ROLE_OPTIONS.every(
-    (role) =>
-      first[role].label === second[role].label &&
-      first[role].permission === second[role].permission,
+    (role) => first[role].label === second[role].label
   );
-
-const formatRoleLabel = (
-  role: RoleKey,
-  settings: RoleSettingsMap,
-): string => settings[role]?.label ?? ROLE_DEFAULT_LABELS[role];
-
-const normalizeRoleLabel = (role: RoleKey, value: string): string => {
-  const trimmed = value.trim();
-  return trimmed === "" ? ROLE_DEFAULT_LABELS[role] : trimmed;
-};
-
-const MemberFormFields = ({
-  values,
-  onChange,
-  invalid,
-}: {
-  values: MemberFormValues;
-  onChange: (field: MemberField, value: string) => void;
-  invalid?: Partial<Record<MemberField, boolean>>;
-}) => {
-  const base =
-    "rounded-lg border px-3 py-2 text-sm text-slate-700 shadow-sm transition focus:outline-none ";
-  const ok = "border-slate-200 focus:ring-2 focus:ring-[hsl(var(--brand-start))] focus:border-transparent";
-  const bad = "border-red-500 focus:ring-2 focus:ring-red-500";
-  return (
-    <div className="mt-6 space-y-4 text-sm">
-      <label className="flex flex-col gap-1 text-xs font-medium text-slate-500">
-        Name
-        <input
-          type="text"
-          className={`${base} ${invalid?.name ? bad : ok}`}
-          placeholder="Name"
-          value={values.name}
-          onChange={(event) => onChange("name", event.target.value)}
-        />
-      </label>
-      <label className="flex flex-col gap-1 text-xs font-medium text-slate-500">
-        Email
-        <input
-          type="email"
-          className={`${base} ${invalid?.email ? bad : ok}`}
-          placeholder="Email"
-          value={values.email}
-          onChange={(event) => onChange("email", event.target.value)}
-        />
-      </label>
-      <label className="flex flex-col gap-1 text-xs font-medium text-slate-500">
-        Phone Number
-        <input
-          type="tel"
-          className={`${base} ${invalid?.phone ? bad : ok}`}
-          placeholder="Phone Number"
-          value={values.phone}
-          onChange={(event) => onChange("phone", event.target.value)}
-        />
-      </label>
-    </div>
-  );
-};
-
-const computeCounts = (members: Member[]): Record<RoleKey, number> =>
-  ROLE_OPTIONS.reduce((accumulator, role) => {
-    accumulator[role] = members.filter((member) => member.role === role).length;
-    return accumulator;
-  }, {} as Record<RoleKey, number>);
 
 export default function Admin() {
-  const [committedMembers, setCommittedMembers] = useState<Member[]>(
-    cloneMembers(initialMembers),
-  );
-  const [draftMembers, setDraftMembers] = useState<Member[]>(
-    cloneMembers(initialMembers),
-  );
+  const [committedMembers, setCommittedMembers] = useState<Member[]>([]);
+  const [draftMembers, setDraftMembers] = useState<Member[]>([]);
+  const [roleMap, setRoleMap] = useState<Record<number, RoleKey>>({});
 
   const [roleSettings, setRoleSettings] = useState<RoleSettingsMap>(
-    cloneRoleSettings(INITIAL_ROLE_SETTINGS),
+    cloneRoleSettings(getDefaultRoleSettings()),
   );
   const [roleSettingsDraft, setRoleSettingsDraft] = useState<RoleSettingsMap>(
-    cloneRoleSettings(INITIAL_ROLE_SETTINGS),
+    cloneRoleSettings(getDefaultRoleSettings()),
   );
 
   const [selectedRole, setSelectedRole] = useState<RoleKey>("planner");
   const [openAdd, setOpenAdd] = useState(false);
-  const [draft, setDraft] = useState<Member>(() => createEmptyMember("planner"));
+  const [draft, setDraft] = useState<MemberFormValues>(() => createEmptyMemberFormValues());
 
   const [editIdx, setEditIdx] = useState<number | null>(null);
-  const [editDraft, setEditDraft] = useState<Member>(() =>
-    createEmptyMember("planner"),
-  );
+  const [editDraft, setEditDraft] = useState<MemberFormValues>(() => createEmptyMemberFormValues());
+  const [openDeleteConfirm, setOpenDeleteConfirm] = useState(false);
 
-  const committedCounts = useMemo(
-    () => computeCounts(committedMembers),
-    [committedMembers],
-  );
+  const [nextTempId, setNextTempId] = useState(-1);
+  const [pendingCreates, setPendingCreates] = useState<
+    { tempId: number; form: MemberFormValues; role: RoleKey }[]
+  >([]);
+  const [pendingUpdates, setPendingUpdates] = useState<Record<number, { password?: string }>>({});
+  const [deletedIds, setDeletedIds] = useState<number[]>([]);
+
+  const [currentUserId, setCurrentUserId] = useState<number | null>(null);
+  const currentUserRole = getCurrentUserRole()?.toLowerCase();
+  const isAdmin = currentUserRole === "admin";
 
   const filteredMembers = useMemo(
     () => draftMembers.filter((member) => member.role === selectedRole),
@@ -223,78 +138,214 @@ export default function Admin() {
 
   const currentRoleDraft = roleSettingsDraft[selectedRole];
 
-  const isAddValid =
-    draft.name.trim() !== "" &&
-    draft.email.trim() !== "" &&
-    draft.phone.trim() !== "";
+  const isAddValid = useMemo(() => {
+    return (
+      draft.username.trim() !== "" &&
+      draft.name.trim() !== "" &&
+      draft.email.trim() !== "" &&
+      draft.phone.trim() !== "" &&
+      draft.password.trim() !== "" &&
+      draft.confirmPassword.trim() !== "" &&
+      validateUsername(draft.username) &&
+      validateEmail(draft.email) &&
+      validatePhone(draft.phone) &&
+      validatePassword(draft.password) &&
+      draft.password === draft.confirmPassword
+    );
+  }, [draft]);
 
-  const isEditValid =
-    editDraft.name.trim() !== "" &&
-    editDraft.email.trim() !== "" &&
-    editDraft.phone.trim() !== "";
+  const isEditValid = useMemo(() => {
+    const basicValid =
+      editDraft.name.trim() !== "" &&
+      editDraft.email.trim() !== "" &&
+      editDraft.phone.trim() !== "" &&
+      validateEmail(editDraft.email) &&
+      validatePhone(editDraft.phone);
 
-  const hasUnsavedChanges =
-    !membersEqual(committedMembers, draftMembers) ||
-    !roleSettingsEqual(roleSettings, roleSettingsDraft);
+    // ถ้าใส่ password ใหม่ต้อง validate
+    if (editDraft.password) {
+      return (
+        basicValid &&
+        validatePassword(editDraft.password) &&
+        editDraft.password === editDraft.confirmPassword
+      );
+    }
+
+    return basicValid;
+  }, [editDraft]);
+
+  const hasUnsavedChangesForSelectedRole = useMemo(() => {
+    if (roleSettings[selectedRole].label !== roleSettingsDraft[selectedRole].label) return true;
+
+    const committedForRole = committedMembers.filter((m) => m.role === selectedRole);
+    const draftForRole = draftMembers.filter((m) => m.role === selectedRole);
+
+    if (draftForRole.some((m) => m.id <= 0)) return true;
+    if (committedForRole.length !== draftForRole.length) return true;
+
+    const committedById = committedForRole.reduce((acc, m) => {
+      acc[m.id] = m;
+      return acc;
+    }, {} as Record<number, Member>);
+
+    for (const dm of draftForRole) {
+      const cm = committedById[dm.id];
+      if (!cm) return true;
+      if (cm.name !== dm.name || cm.email !== dm.email || cm.phone !== dm.phone) return true;
+    }
+
+    return false;
+  }, [committedMembers, draftMembers, roleSettings, roleSettingsDraft, selectedRole]);
 
   const handleRoleSelect = (role: RoleKey) => {
     setSelectedRole(role);
-    setDraft(createEmptyMember(role));
+    setDraft(createEmptyMemberFormValues());
     setEditIdx(null);
-    setEditDraft(createEmptyMember(role));
+    setEditDraft(createEmptyMemberFormValues());
   };
 
-  const handleAddMember = () => {
+  const handleAddMember = async () => {
     if (!isAddValid) return;
 
-    const sanitized = {
-      ...draft,
-      role: selectedRole,
+    const tempId = nextTempId;
+    setNextTempId((id) => id - 1);
+
+    const staged: Member = {
+      id: tempId,
       name: draft.name.trim(),
       email: draft.email.trim(),
       phone: draft.phone.trim(),
+      role: selectedRole,
     };
 
-    setDraftMembers((existing) => existing.concat(sanitized));
+    setDraftMembers((existing) => existing.concat(staged));
+    setPendingCreates((prev) => prev.concat({ tempId, form: draft, role: selectedRole }));
+
     setOpenAdd(false);
-    setDraft(createEmptyMember(selectedRole));
+    setDraft(createEmptyMemberFormValues());
   };
 
-  const openEdit = (index: number) => {
+  const openEdit = async (index: number) => {
     const current = filteredMembers[index];
     if (!current) return;
 
     setEditIdx(index);
-    setEditDraft({ ...current });
+
+    if (current.id <= 0) {
+      const pending = pendingCreates.find((p) => p.tempId === current.id);
+      setEditDraft({
+        username: pending?.form.username ?? "",
+        name: current.name,
+        email: current.email,
+        phone: current.phone,
+        password: pending?.form.password ?? "",
+        confirmPassword: pending?.form.confirmPassword ?? "",
+      });
+      return;
+    }
+
+    try {
+      const response = await fetch(`http://localhost:4000/api/employee/${current.id}`);
+      if (!response.ok) {
+        throw new Error("Failed to fetch employee details");
+      }
+      const employeeData = await response.json();
+      setEditDraft({
+        username: employeeData.username || "",
+        name: current.name,
+        email: current.email,
+        phone: current.phone,
+        password: "",
+        confirmPassword: "",
+      });
+    } catch (error) {
+      console.error("Error fetching employee details:", error);
+      setEditDraft({
+        username: "",
+        name: current.name,
+        email: current.email,
+        phone: current.phone,
+        password: "",
+        confirmPassword: "",
+      });
+    }
   };
 
-  const saveEdit = () => {
+  const saveEdit = async () => {
     if (editIdx === null) return;
     const current = filteredMembers[editIdx];
     if (!current) return;
 
-    const sanitized = {
-      ...current,
-      name: editDraft.name.trim(),
+    const roleIdEntry = Object.entries(roleMap).find(([k, v]) => v === selectedRole)?.[0];
+    const role_id = roleIdEntry ? parseInt(roleIdEntry, 10) : undefined;
+
+    const updateData: any = {
+      fullname: editDraft.name.trim(),
       email: editDraft.email.trim(),
       phone: editDraft.phone.trim(),
+      role_id,
     };
+    if (editDraft.password && editDraft.password === editDraft.confirmPassword) {
+      updateData.password = editDraft.password;
+    }
 
-    setDraftMembers((existing) =>
-      existing.map((member) => (member === current ? sanitized : member)),
-    );
+    if (current.id > 0) {
+      try {
+        const res = await fetch(`http://localhost:4000/api/employee/${current.id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(updateData),
+        });
+        if (!res.ok) throw new Error("Failed updating member");
+
+        const empRes = await fetch("http://localhost:4000/api/employee");
+        if (!empRes.ok) throw new Error("Failed fetching employees");
+        const empData = await empRes.json();
+
+        const mapped: Member[] = (empData ?? []).map((e: any) => ({
+          id: e.employee_id,
+          name: e.fullname ?? e.name ?? e.username ?? "",
+          email: e.email ?? "",
+          phone: e.phone ?? "",
+          role: roleMap[e.role_id] ?? "recorder",
+        }));
+
+        setCommittedMembers(cloneMembers(mapped));
+        setDraftMembers(cloneMembers(mapped));
+      } catch (error) {
+        console.error("Error updating employee:", error);
+      }
+    } else {
+      const sanitized: Member = {
+        ...current,
+        name: editDraft.name.trim(),
+        email: editDraft.email.trim(),
+        phone: editDraft.phone.trim(),
+        role: selectedRole,
+      };
+      setDraftMembers((existing) =>
+        existing.map((member) => (member === current ? sanitized : member))
+      );
+    }
+
     setEditIdx(null);
-    setEditDraft(createEmptyMember(selectedRole));
+    setEditDraft(createEmptyMemberFormValues());
   };
 
-  const deleteMember = () => {
+  const deleteMember = async () => {
     if (editIdx === null) return;
     const current = filteredMembers[editIdx];
     if (!current) return;
 
-    setDraftMembers((existing) => existing.filter((member) => member !== current));
+    if (current.id > 0) {
+      setDeletedIds((prev) => [...prev, current.id]);
+    } else {
+      setPendingCreates((prev) => prev.filter((p) => p.tempId !== current.id));
+    }
+
+    setDraftMembers((existing) => existing.filter((m) => m.id !== current.id));
     setEditIdx(null);
-    setEditDraft(createEmptyMember(selectedRole));
+    setEditDraft(createEmptyMemberFormValues());
   };
 
   const handleRoleLabelChange = (value: string) => {
@@ -307,93 +358,187 @@ export default function Admin() {
     }));
   };
 
-  const handlePermissionChange = (value: PermissionLevel) => {
-    setRoleSettingsDraft((existing) => ({
-      ...existing,
-      [selectedRole]: {
-        ...existing[selectedRole],
-        permission: value,
-      },
-    }));
-  };
-
   const handleCancelChanges = () => {
     setDraftMembers(cloneMembers(committedMembers));
     setRoleSettingsDraft(cloneRoleSettings(roleSettings));
-    setDraft(createEmptyMember(selectedRole));
+    setDraft(createEmptyMemberFormValues());
     setOpenAdd(false);
     setEditIdx(null);
-    setEditDraft(createEmptyMember(selectedRole));
+    setEditDraft(createEmptyMemberFormValues());
   };
 
-  const handleSaveChanges = () => {
-    if (!hasUnsavedChanges) return;
+  const handleSaveChanges = async () => {
+    if (!hasUnsavedChangesForSelectedRole) return;
 
-    const normalizedMembers = draftMembers.map((member) => ({
-      ...member,
-      name: member.name.trim(),
-      email: member.email.trim(),
-      phone: member.phone.trim(),
-    }));
+    try {
+      for (const id of deletedIds) {
+        const res = await fetch(`http://localhost:4000/api/employee/${id}`, { method: "DELETE" });
+        if (!res.ok) throw new Error(`Failed deleting ${id}`);
+      }
 
-    const normalizedRoleSettings = ROLE_OPTIONS.reduce((accumulator, role) => {
-      const draftSetting = roleSettingsDraft[role];
-      accumulator[role] = {
-        label: normalizeRoleLabel(role, draftSetting.label),
-        permission: draftSetting.permission,
-      };
-      return accumulator;
-    }, {} as RoleSettingsMap);
+      for (const create of pendingCreates) {
+        const roleIdEntry = Object.entries(roleMap).find(([k, v]) => v === create.role)?.[0];
+        const role_id = roleIdEntry ? parseInt(roleIdEntry, 10) : undefined;
 
-    const committedClone = cloneMembers(normalizedMembers);
-    const settingsClone = cloneRoleSettings(normalizedRoleSettings);
+        const res = await fetch("http://localhost:4000/api/employee", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            username: create.form.username.trim(),
+            fullname: create.form.name.trim(),
+            email: create.form.email.trim(),
+            phone: create.form.phone.trim(),
+            password: create.form.password,
+            role_id,
+          }),
+        });
+        if (!res.ok) throw new Error(`Failed creating ${create.form.username}`);
+      }
 
-    setCommittedMembers(committedClone);
-    setDraftMembers(cloneMembers(committedClone));
-    setRoleSettings(settingsClone);
-    setRoleSettingsDraft(cloneRoleSettings(settingsClone));
-    setDraft(createEmptyMember(selectedRole));
-    setEditIdx(null);
-    setEditDraft(createEmptyMember(selectedRole));
+      const committedById = committedMembers.reduce((acc, m) => {
+        acc[m.id] = m;
+        return acc;
+      }, {} as Record<number, Member>);
+
+      for (const m of draftMembers) {
+        if (m.id > 0) {
+          const original = committedById[m.id];
+          const changed =
+            !original ||
+            original.name !== m.name ||
+            original.email !== m.email ||
+            original.phone !== m.phone;
+
+          const needPassword = pendingUpdates[m.id]?.password;
+
+          if (changed || needPassword) {
+            const updateData: any = {
+              fullname: m.name.trim(),
+              email: m.email.trim(),
+              phone: m.phone.trim(),
+            };
+            if (needPassword) updateData.password = pendingUpdates[m.id].password;
+
+            const res = await fetch(`http://localhost:4000/api/employee/${m.id}`, {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(updateData),
+            });
+            if (!res.ok) throw new Error(`Failed updating ${m.id}`);
+          }
+        }
+      }
+
+      const rolesRes = await fetch("http://localhost:4000/api/roles");
+      if (!rolesRes.ok) throw new Error("Failed fetching roles");
+      const rolesData: RoleApi[] = await rolesRes.json();
+      const map: Record<number, RoleKey> = {};
+      rolesData.forEach((r) => {
+        const key = r.role_name.toLowerCase();
+        if (key === "admin") map[r.role_id] = "admin";
+        else if (key === "planner") map[r.role_id] = "planner";
+        else if (key === "orderer") map[r.role_id] = "orderer";
+        else map[r.role_id] = "recorder";
+      });
+      setRoleMap(map);
+
+      const empRes = await fetch("http://localhost:4000/api/employee");
+      if (!empRes.ok) throw new Error("Failed fetching employees");
+      const empData = await empRes.json();
+      const mapped: Member[] = (empData ?? []).map((e: any) => ({
+        id: e.employee_id,
+        name: e.fullname ?? e.name ?? e.username ?? "",
+        email: e.email ?? "",
+        phone: e.phone ?? "",
+        role: map[e.role_id] ?? "recorder",
+      }));
+
+      setCommittedMembers(cloneMembers(mapped));
+      setDraftMembers(cloneMembers(mapped));
+      setPendingCreates([]);
+      setPendingUpdates({});
+      setDeletedIds([]);
+      setNextTempId(-1);
+    } catch (err) {
+      console.error("Failed to save changes:", err);
+    }
+  };
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const rolesRes = await fetch("http://localhost:4000/api/roles");
+        if (!rolesRes.ok) throw new Error(`HTTP ${rolesRes.status}`);
+        const rolesData: RoleApi[] = await rolesRes.json();
+
+        const map: Record<number, RoleKey> = {};
+        rolesData.forEach((r) => {
+          const key = r.role_name.toLowerCase();
+          if (key === "admin") map[r.role_id] = "admin";
+          else if (key === "planner") map[r.role_id] = "planner";
+          else if (key === "orderer") map[r.role_id] = "orderer";
+          else map[r.role_id] = "recorder";
+        });
+        if (!mounted) return;
+        setRoleMap(map);
+
+        const empRes = await fetch("http://localhost:4000/api/employee");
+        if (!empRes.ok) throw new Error(`HTTP ${empRes.status}`);
+        const empData = await empRes.json();
+
+        const mapped: Member[] = (empData ?? []).map((e: any) => ({
+          id: e.employee_id,
+          name: e.fullname ?? e.name ?? e.username ?? "",
+          email: e.email ?? "",
+          phone: e.phone ?? "",
+          role: map[e.role_id] ?? "recorder",
+        }));
+
+        setCommittedMembers(cloneMembers(mapped));
+        setDraftMembers(cloneMembers(mapped));
+      } catch (err) {
+        console.error("Failed to load employees or roles:", err);
+      }
+    })();
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    const userStr = localStorage.getItem("user");
+    if (userStr) {
+      try {
+        const user = JSON.parse(userStr);
+        setCurrentUserId(user.id);
+      } catch (e) {
+        console.error("Failed to parse user:", e);
+      }
+    }
+  }, []);
+
+  const canEditMember = (memberId: number): boolean => {
+    if (isAdmin) return true;
+    return memberId === currentUserId;
   };
 
   return (
-    <AppLayout>
+    <Sidebar>
       <div className="space-y-4">
         <div className="rounded-xl bg-gradient-to-r from-[hsl(var(--brand-start))] to-[hsl(var(--brand-end))] p-6 text-white shadow">
           <h1 className="text-2xl font-bold">Admin</h1>
         </div>
+        
         <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
-          <div className="rounded-lg border bg-white p-4">
-            <div className="mb-2 font-semibold">Group</div>
-            <div className="space-y-2 text-sm">
-              {ROLE_OPTIONS.map((role) => {
-                const isSelected = selectedRole === role;
-                const label = formatRoleLabel(role, roleSettings);
-                return (
-                  <button
-                    key={role}
-                    onClick={() => handleRoleSelect(role)}
-                    className={`flex w-full items-center justify-between rounded border px-3 py-2 text-left transition hover:bg-slate-50 ${
-                      isSelected ? "border-[hsl(var(--brand-start))] bg-slate-50" : "border-slate-200"
-                    }`}
-                  >
-                    <div className="flex flex-col">
-                      <span className={isSelected ? "font-semibold" : "font-medium"}>
-                        {label}
-                      </span>
-                      <span className="text-xs text-slate-400">
-                        Permission: {roleSettings[role].permission}
-                      </span>
-                    </div>
-                    <span className="text-slate-400">
-                      • {committedCounts[role] ?? 0} {committedCounts[role] === 1 ? "Member" : "Members"}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
+          <RoleSelector
+            selectedRole={selectedRole}
+            onRoleSelect={handleRoleSelect}
+            roleSettings={roleSettings}
+            members={committedMembers}
+          />
+          
           <div className="rounded-lg border bg-white p-4 md:col-span-2">
             <div className="mb-3 flex items-center justify-between">
               <div className="font-semibold">Edit Roles</div>
@@ -403,13 +548,14 @@ export default function Admin() {
                 </Button>
                 <Button
                   onClick={handleSaveChanges}
-                  disabled={!hasUnsavedChanges}
+                  disabled={!hasUnsavedChangesForSelectedRole || !isAdmin}
                   className="disabled:bg-slate-300 disabled:text-slate-600"
                 >
                   Save changes
                 </Button>
               </div>
             </div>
+            
             <div className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
               <input
                 className="rounded border border-slate-200 px-3 py-2 text-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[hsl(var(--brand-start))]"
@@ -417,177 +563,60 @@ export default function Admin() {
                 value={currentRoleDraft.label}
                 onChange={(event) => handleRoleLabelChange(event.target.value)}
               />
-              <select
-                className="rounded border border-slate-200 px-3 py-2 text-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[hsl(var(--brand-start))]"
-                value={currentRoleDraft.permission}
-                onChange={(event) =>
-                  handlePermissionChange(event.target.value as PermissionLevel)
-                }
-              >
-                {PERMISSION_OPTIONS.map((option) => (
-                  <option key={option}>{option}</option>
-                ))}
-              </select>
             </div>
+
             <div className="mt-4 space-y-2 text-sm">
               {filteredMembers.map((member, index) => (
-                <div
-                  key={`${member.email}-${member.phone}-${index}`}
-                  className="flex items-center justify-between rounded border border-slate-200 px-3 py-2"
-                >
-                  <div className="flex flex-col">
-                    <span className="font-medium text-slate-700">{member.name}</span>
-                    <span className="text-xs text-slate-400">{member.email}</span>
-                  </div>
-                  <button
-                    className="text-[hsl(var(--brand-start))]"
-                    onClick={() => openEdit(index)}
-                    type="button"
-                  >
-                    Edit
-                  </button>
-                </div>
+                <MemberListItem
+                  key={member.id}
+                  member={member}
+                  onEdit={() => openEdit(index)}
+                  canEdit={canEditMember(member.id)}
+                />
               ))}
-              <Dialog
-                open={openAdd}
-                onOpenChange={(open) => {
-                  setOpenAdd(open);
-                  if (!open) {
-                    setDraft(createEmptyMember(selectedRole));
-                  }
-                }}
-              >
-                <DialogTrigger asChild>
-                  <Button className="mt-2" type="button">
-                    + Add Member
-                  </Button>
-                </DialogTrigger>
-                <DialogContent className="max-w-3xl overflow-hidden border-0 p-0 shadow-xl">
-                  <div className="grid grid-cols-1 md:grid-cols-[1fr_260px]">
-                    <div className="p-8">
-                      <DialogHeader className="space-y-4 text-left">
-                        <div className="flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-br from-[hsl(var(--brand-start))] to-[hsl(var(--brand-end))] text-white shadow-lg">
-                          <UserPlus className="h-6 w-6" strokeWidth={1.8} />
-                        </div>
-                        <DialogTitle className="text-2xl font-semibold text-slate-900">
-                          Add New Member
-                        </DialogTitle>
-                        <DialogDescription className="text-sm text-slate-500">
-                          Enter the details below to add a new member to your team.
-                        </DialogDescription>
-                      </DialogHeader>
-                      <MemberFormFields
-                        values={draft}
-                        invalid={{
-                          name: draft.name.trim() === "",
-                          email: draft.email.trim() === "",
-                          phone: draft.phone.trim() === "",
-                        }}
-                        onChange={(field, value) =>
-                          setDraft((current) => ({ ...current, [field]: value }))
-                        }
-                      />
-                      <div className="mt-8 flex justify-end gap-3">
-                        <Button
-                          variant="secondary"
-                          onClick={() => setOpenAdd(false)}
-                          type="button"
-                        >
-                          Cancel
-                        </Button>
-                        <Button
-                          onClick={handleAddMember}
-                          disabled={!isAddValid}
-                          type="button"
-                        >
-                          Add Member
-                        </Button>
-                      </div>
-                    </div>
-                    <div className="hidden items-center justify-center bg-gradient-to-br from-[hsl(var(--brand-start))] to-[hsl(var(--brand-end))] p-8 md:flex">
-                      <div className="flex h-32 w-32 items-center justify-center rounded-full bg-white/10 backdrop-blur">
-                        <UserPlus className="h-16 w-16 text-white" strokeWidth={1.4} />
-                      </div>
-                    </div>
-                  </div>
-                </DialogContent>
-              </Dialog>
 
-              <Dialog
+              {isAdmin && (
+                <AddMemberDialog
+                  open={openAdd}
+                  onOpenChange={setOpenAdd}
+                  draft={draft}
+                  onChange={(field, value) => setDraft({ ...draft, [field]: value })}
+                  onAdd={handleAddMember}
+                  isValid={isAddValid}
+                />
+              )}
+
+              <EditMemberDialog
                 open={editIdx !== null}
                 onOpenChange={(open) => {
                   if (!open) {
                     setEditIdx(null);
-                    setEditDraft(createEmptyMember(selectedRole));
+                    setEditDraft(createEmptyMemberFormValues());
                   }
                 }}
-              >
-                <DialogContent className="max-w-3xl overflow-hidden border-0 p-0 shadow-xl">
-                  <div className="grid grid-cols-1 md:grid-cols-[1fr_260px]">
-                    <div className="p-8">
-                      <DialogHeader className="space-y-4 text-left">
-                        <div className="flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-br from-[hsl(var(--brand-start))] to-[hsl(var(--brand-end))] text-white shadow-lg">
-                          <UserPen className="h-6 w-6" strokeWidth={1.8} />
-                        </div>
-                        <DialogTitle className="text-2xl font-semibold text-slate-900">
-                          Edit Member
-                        </DialogTitle>
-                        <DialogDescription className="text-sm text-slate-500">
-                          Update the details below to edit this team member.
-                        </DialogDescription>
-                      </DialogHeader>
-                      <MemberFormFields
-                        values={editDraft}
-                        invalid={{
-                          name: editDraft.name.trim() === "",
-                          email: editDraft.email.trim() === "",
-                          phone: editDraft.phone.trim() === "",
-                        }}
-                        onChange={(field, value) =>
-                          setEditDraft((current) => ({ ...current, [field]: value }))
-                        }
-                      />
-                      <div className="mt-8 flex flex-col-reverse justify-between gap-3 md:flex-row md:items-center">
-                        <Button
-                          variant="destructive"
-                          onClick={deleteMember}
-                          type="button"
-                        >
-                          Delete
-                        </Button>
-                        <div className="flex justify-end gap-3">
-                          <Button
-                            variant="secondary"
-                            onClick={() => {
-                              setEditIdx(null);
-                              setEditDraft(createEmptyMember(selectedRole));
-                            }}
-                            type="button"
-                          >
-                            Cancel
-                          </Button>
-                          <Button
-                            onClick={saveEdit}
-                            disabled={!isEditValid}
-                            type="button"
-                          >
-                            Update
-                          </Button>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="hidden items-center justify-center bg-gradient-to-br from-[hsl(var(--brand-start))] to-[hsl(var(--brand-end))] p-8 md:flex">
-                      <div className="flex h-32 w-32 items-center justify-center rounded-full bg-white/10 backdrop-blur">
-                        <UserPen className="h-16 w-16 text-white" strokeWidth={1.4} />
-                      </div>
-                    </div>
-                  </div>
-                </DialogContent>
-              </Dialog>
+                draft={editDraft}
+                onChange={(field, value) =>
+                  setEditDraft((current) => ({ ...current, [field]: value }))
+                }
+                onSave={saveEdit}
+                onDelete={() => setOpenDeleteConfirm(true)}
+                isValid={isEditValid}
+                isAdmin={isAdmin}
+              />
+
+              <DeleteConfirmDialog
+                open={openDeleteConfirm}
+                onOpenChange={setOpenDeleteConfirm}
+                onConfirm={() => {
+                  deleteMember();
+                  setOpenDeleteConfirm(false);
+                }}
+                memberName={editDraft.name}
+              />
             </div>
           </div>
         </div>
       </div>
-    </AppLayout>
+    </Sidebar>
   );
 }

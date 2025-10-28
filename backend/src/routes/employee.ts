@@ -75,11 +75,18 @@ router.post("/", async (req: Request, res: Response): Promise<void> => {
 // 📍 แก้ไขพนักงาน
 router.put("/:id", async (req: Request, res: Response): Promise<void> => {
   const { id } = req.params;
-  const { fullname, email, phone, role_id } = req.body;
+  const { fullname, email, phone, role_id, password } = req.body;
   try {
+    const updateData: any = { fullname, email, phone };
+    if (role_id !== undefined) updateData.role_id = role_id;
+    if (password) {
+      // เข้ารหัสรหัสผ่านใหม่
+      const hashedPassword = await bcrypt.hash(password, 10);
+      updateData.password = hashedPassword;
+    }
     const updatedEmployee = await prisma.employee.update({
       where: { employee_id: parseInt(id, 10) },
-      data: { fullname, email, phone, role_id },
+      data: updateData,
     });
     res.json(updatedEmployee);
   } catch (error) {

@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import AppLayout from "@/components/layout/AppLayout";
+import AppLayout from "@/components/layout/Sidebar";
 import CalendarMonth, {
   CalendarEvent,
 } from "@/components/calendar/CalendarMonth";

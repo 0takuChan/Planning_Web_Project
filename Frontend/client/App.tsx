@@ -17,34 +17,153 @@ import Login from "./pages/Login";
 
 const queryClient = new QueryClient();
 
-import { isLoggedIn } from "./lib/auth";
+import { isLoggedIn, getCurrentUserRole } from "./lib/auth";
+
+import React, { createContext, useContext, useMemo, useState, useEffect } from "react";
+
+type RoleKey = "admin" | "planner" | "orderer" | "recorder" | string;
+
+interface PermissionsContextValue {
+  role: RoleKey | null;
+  canEdit: (pageKey: string) => boolean;
+  canView: (pageKey: string) => boolean;
+}
+
+const PermissionsContext = createContext<PermissionsContextValue>({
+  role: null,
+  canEdit: () => false,
+  canView: () => false,
+});
+
+export const usePermissions = () => useContext(PermissionsContext);
+
+const ALL_ROLES: RoleKey[] = ["Admin", "Planner", "Orderer", "Recorder"];
+
+const PAGE_PERMISSIONS: Record<string, { view: RoleKey[], edit: RoleKey[] }> = {
+  "/": {
+    view: ALL_ROLES,
+    edit: ALL_ROLES,
+  },
+  "/customers": {
+    view: ALL_ROLES,
+    edit: ["Admin", "Orderer"],
+  },
+  "/jobs": {
+    view: ALL_ROLES,
+    edit: ["Admin", "Orderer"],
+  },
+  "/planning": {
+    view: ALL_ROLES,
+    edit: ["Admin", "Planner"],
+  },
+  "/add-data": {
+    view: ALL_ROLES,
+    edit: ["Admin", "Recorder"],
+  },
+  "/admin": {
+    view: ALL_ROLES,
+    edit: ["Admin"],
+  },
+};
 
 function ProtectedRoute({ children }: { children: JSX.Element }) {
   return isLoggedIn() ? children : <Navigate to="/login" replace />;
 }
 
+function PublicRoute({ children }: { children: JSX.Element }) {
+  return !isLoggedIn() ? children : <Navigate to="/" replace />;
+}
 
-const App = () => (
-  <QueryClientProvider client={queryClient}>
-    <TooltipProvider>
-      <Toaster />
-      <Sonner />
-      <BrowserRouter>
-        <Routes>
-          <Route path="/login" element={<Login />} />
+function RoleBasedRoute({ children, path }: { children: JSX.Element; path: string }) {
+  const role = getCurrentUserRole()?.toLowerCase();
+  
+  if (!isLoggedIn()) {
+    return <Navigate to="/login" replace />;
+  }
+  
+  const permissions = PAGE_PERMISSIONS[path];
+  
+  if (!permissions) {
+    return role === "admin" ? children : <Navigate to="/" replace />;
+  }
+  
+  const canView = permissions.view.some(r => r.toLowerCase() === role);
+  
+  return canView ? children : <Navigate to="/" replace />;
+}
 
-          <Route path="/" element={<ProtectedRoute><Index /></ProtectedRoute>} />
-          <Route path="/customers" element={<ProtectedRoute><Customers /></ProtectedRoute>} />
-          <Route path="/jobs" element={<ProtectedRoute><Jobs /></ProtectedRoute>} />
-          <Route path="/planning" element={<ProtectedRoute><Planning /></ProtectedRoute>} />
-          <Route path="/add-data" element={<ProtectedRoute><AddData /></ProtectedRoute>} />
-          <Route path="/admin" element={<ProtectedRoute><Admin /></ProtectedRoute>} />
-          {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
-          <Route path="*" element={<NotFound />} />
-        </Routes>
-      </BrowserRouter>
-    </TooltipProvider>
-  </QueryClientProvider>
-);
+export default function App() {
+  const [role, setRole] = useState<RoleKey | null>(() => getCurrentUserRole());
+
+  // Sync role กับ localStorage เมื่อมีการเปลี่ยนแปลง
+  useEffect(() => {
+    const checkRole = () => {
+      const currentRole = getCurrentUserRole();
+      if (currentRole !== role) {
+        setRole(currentRole);
+      }
+    };
+
+    // เช็คทุกครั้งที่ component mount และเมื่อ storage เปลี่ยน
+    checkRole();
+    window.addEventListener('storage', checkRole);
+    
+    // เช็คทุก 100ms ในกรณี localStorage เปลี่ยนใน tab เดียวกัน (storage event ไม่ fire)
+    const interval = setInterval(checkRole, 100);
+
+    return () => {
+      window.removeEventListener('storage', checkRole);
+      clearInterval(interval);
+    };
+  }, [role]);
+
+  const ctxValue = useMemo<PermissionsContextValue>(() => {
+    return {
+      role,
+      canView: (pageKey: string) => {
+        if (!role) return false;
+        const roleLc = String(role).toLowerCase();
+        const permissions = PAGE_PERMISSIONS[pageKey];
+        
+        if (!permissions) return roleLc === "admin";
+        
+        return permissions.view.some(r => r.toLowerCase() === roleLc);
+      },
+      canEdit: (pageKey: string) => {
+        if (!role) return false;
+        const roleLc = String(role).toLowerCase();
+        const permissions = PAGE_PERMISSIONS[pageKey];
+        
+        if (!permissions) return roleLc === "admin";
+        
+        return permissions.edit.some(r => r.toLowerCase() === roleLc);
+      },
+    };
+  }, [role]);
+
+  return (
+    <QueryClientProvider client={queryClient}>
+      <PermissionsContext.Provider value={ctxValue}>
+        <TooltipProvider>
+          <Toaster />
+          <Sonner />
+          <BrowserRouter>
+            <Routes>
+              <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
+
+              <Route path="/" element={<RoleBasedRoute path="/"><Index /></RoleBasedRoute>} />
+              <Route path="/customers" element={<RoleBasedRoute path="/customers"><Customers /></RoleBasedRoute>} />
+              <Route path="/jobs" element={<RoleBasedRoute path="/jobs"><Jobs /></RoleBasedRoute>} />
+              <Route path="/planning" element={<RoleBasedRoute path="/planning"><Planning /></RoleBasedRoute>} />
+              <Route path="/add-data" element={<RoleBasedRoute path="/add-data"><AddData /></RoleBasedRoute>} />
+              <Route path="/admin" element={<RoleBasedRoute path="/admin"><Admin /></RoleBasedRoute>} />
+              <Route path="*" element={<NotFound />} />
+            </Routes>
+          </BrowserRouter>
+        </TooltipProvider>
+      </PermissionsContext.Provider>
+    </QueryClientProvider>
+  );
+}
 
 createRoot(document.getElementById("root")!).render(<App />);

@@ -21,14 +21,16 @@ export async function login(username: string, password: string): Promise<LoginRe
 
   const data: LoginResponse = await res.json();
 
-  // เก็บ token ไว้ localStorage
+  // เก็บ token และ user ไว้ localStorage
   localStorage.setItem("token", data.token);
+  localStorage.setItem("user", JSON.stringify(data.user));
 
   return data;
 }
 
 export function logout() {
   localStorage.removeItem("token");
+  localStorage.removeItem("user");
 }
 
 export function getToken() {
@@ -36,6 +38,17 @@ export function getToken() {
 }
 
 export function isLoggedIn(): boolean {
-  // ตรวจสอบว่ามี token อยู่ใน localStorage หรือไม่
   return !!localStorage.getItem("token");
+}
+
+// เพิ่มฟังก์ชันนี้
+export function getCurrentUserRole(): string | null {
+  const raw = localStorage.getItem("user");
+  if (!raw) return null;
+  try {
+    const user = JSON.parse(raw);
+    return user?.role ?? null;
+  } catch {
+    return null;
+  }
 }

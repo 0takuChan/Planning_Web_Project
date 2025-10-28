@@ -1,4 +1,4 @@
-import AppLayout from "@/components/layout/AppLayout";
+import AppLayout from "@/components/layout/Sidebar";
 import { useMemo, useState } from "react";
 import { init, Row } from "../shared/Api_Jobs";
 import { Button } from "@/components/ui/button";
@@ -19,6 +19,7 @@ import {
 import { initialCustomers } from "../shared/Api_Customer";
 import { Calendar } from "lucide-react";
 import * as Popover from "@radix-ui/react-popover";
+import { usePermissions } from "@/App";
 
 
 function generateJobId(existing: string[]): string {
@@ -45,6 +46,8 @@ function formatDateDMY(date: string) {
 }
 
 export default function Jobs() {
+  const { canEdit } = usePermissions();
+  const canEditPage = canEdit("/jobs");
   const [rows, setRows] = useState<Row[]>(init);
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<Row>({
@@ -195,7 +198,7 @@ export default function Jobs() {
             <div className="text-slate-600">Job • {rows.length} total</div>
             <Dialog open={open} onOpenChange={setOpen}>
               <DialogTrigger asChild>
-                <Button>Add Job</Button>
+                <Button disabled={!canEditPage}>Add Job</Button>
               </DialogTrigger>
               <DialogContent className="max-w-3xl p-0 overflow-hidden">
                 <div className="grid grid-cols-1 md:grid-cols-2">
@@ -302,7 +305,7 @@ export default function Jobs() {
                         </Button>
                         <Button
                           onClick={add}
-                          disabled={!isAddValid}
+                          disabled={!canEditPage || !isAddValid}
                           className={!isAddValid ? "opacity-50 cursor-not-allowed" : ""}
                         >
                           Add
@@ -360,7 +363,6 @@ export default function Jobs() {
                   <th>Step</th>
                   {th("fabric", "Fabric")}
                   <th className="text-right">Actions</th>
-
                 </tr>
               </thead>
               <tbody>
@@ -371,24 +373,25 @@ export default function Jobs() {
                     <td>{r.quantity}</td>
                     <td>{r.date}</td>
                     <td>
-                      {[
-                        { name: "Cutting", done: r.cutting },
-                        { name: "Heating", done: r.heating },
-                        { name: "Embroidering", done: r.embroidering },
-                        { name: "Sewing", done: r.sewing },
-                        { name: "QC", done: r.qc },
-                        { name: "Pack", done: r.pack },
-                      ]
-                        .filter((step) => step.done)
-                        .map((step) => step.name)
+                      {Object.entries({
+                        "Cutting": r.cutting,
+                        "Heating": r.heating,
+                        "Embroidering": r.embroidering,
+                        "Sewing": r.sewing,
+                        "QC": r.qc,
+                        "Pack": r.pack,
+                      })
+                        .filter(([_, done]) => done)
+                        .map(([name]) => name)
                         .join(", ")}
                     </td>
                     <td className="capitalize">{r.fabric}</td>
                     <td className="text-right">
                       <Button
+                        variant="ghost"
                         size="sm"
-                        variant="outline"
-                        onClick={() => openEdit(rows.indexOf(r))}
+                        onClick={() => openEdit(i)}
+                        disabled={!canEditPage}
                       >
                         Edit
                       </Button>
@@ -396,18 +399,12 @@ export default function Jobs() {
                   </tr>
                 ))}
               </tbody>
-
             </table>
           </div>
         </div>
       </div>
 
-      <Dialog
-        open={editIndex !== null}
-        onOpenChange={(o) => {
-          if (!o) setEditIndex(null);
-        }}
-      >
+      <Dialog open={editIndex !== null} onOpenChange={(o) => { if (!o) setEditIndex(null); }}>
         <DialogContent className="max-w-3xl p-0 overflow-hidden">
           <div className="grid grid-cols-1 md:grid-cols-2">
             <div className="p-6">
@@ -500,23 +497,23 @@ export default function Jobs() {
                     </button>
                   </div>
                 </div>
-                <div className="flex justify-between gap-2 pt-2">
-                  <Button variant="destructive" onClick={deleteRow}>
+                <div className="mt-6 flex justify-between gap-3">
+                  <Button
+                    variant="destructive"
+                    onClick={deleteRow}
+                    disabled={!canEditPage}
+                  >
                     Delete
                   </Button>
-                  <div className="flex gap-2">
-                    <Button
-                      variant="secondary"
-                      onClick={() => setEditIndex(null)}
-                    >
+                  <div className="flex gap-3">
+                    <Button variant="outline" onClick={() => setEditIndex(null)}>
                       Cancel
                     </Button>
                     <Button
                       onClick={saveEdit}
-                      disabled={!isEditChanged}
-                      className={!isEditChanged ? "opacity-50 cursor-not-allowed" : ""}
+                      disabled={!canEditPage || !isEditChanged}
                     >
-                      Update
+                      Save
                     </Button>
                   </div>
                 </div>

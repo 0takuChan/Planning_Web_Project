@@ -27,7 +27,7 @@ services:
       PGADMIN_DEFAULT_EMAIL: admin@dpu.ac.th
       PGADMIN_DEFAULT_PASSWORD: admin
     ports:
-      - "8080:80"
+      - "8081:80"
     depends_on:
       - postgres
     volumes:

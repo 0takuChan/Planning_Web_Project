@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import AppLayout from "@/components/layout/AppLayout";
+import AppLayout from "@/components/layout/Sidebar";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -10,8 +10,9 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { LayoutGrid } from "lucide-react";
-import { init as jobRows } from "../shared/Api_Jobs"; // import jobs ที่มีอยู่
+import { init as jobRows } from "../shared/Api_Jobs";
 import { init, Row } from "../shared/Api_Recroded";
+import { usePermissions } from "@/App";
 
 type DataField = "job" | "step" | "quantity" | "recordedDate";
 
@@ -140,6 +141,9 @@ const FormFields = ({
 };
 
 export default function AddData() {
+  const { canEdit } = usePermissions();
+  const canEditPage = canEdit("/add-data");
+
   const [rows, setRows] = useState<Row[]>(init);
 
   const [openAdd, setOpenAdd] = useState(false);
@@ -248,7 +252,7 @@ export default function AddData() {
               }}
             >
               <DialogTrigger asChild>
-                <Button>+ Add Data</Button>
+                <Button disabled={!canEditPage}>+ Add Data</Button>
               </DialogTrigger>
               <DialogContent className="max-w-3xl overflow-hidden border-0 p-0 shadow-xl">
                 <div className="grid grid-cols-1 md:grid-cols-[1fr_260px]">
@@ -284,17 +288,15 @@ export default function AddData() {
                       }
                     />
 
-
                     <div className="mt-8 flex justify-end gap-3">
-                      <Button
-                        variant="secondary"
-                        onClick={() => setOpenAdd(false)}
-                        type="button"
-                      >
+                      <Button variant="outline" onClick={() => setOpenAdd(false)}>
                         Cancel
                       </Button>
-                      <Button onClick={add} disabled={!isAddValid} type="button">
-                        Add Data
+                      <Button
+                        onClick={add}
+                        disabled={!canEditPage || !isAddValid}
+                      >
+                        Add
                       </Button>
                     </div>
                   </div>
@@ -313,48 +315,31 @@ export default function AddData() {
               <thead className="text-slate-500">
                 <tr>
                   {th("job", "Job")}
-                  {th("quantity", "Quantity")}
                   {th("step", "Step")}
-                  {th("recordedDate", "Recording Date")}
-                  {th("dueDate", "Due Date")}
-                  {th("recorder", "Recorded By")}
-                  <th className="text-right">Action</th>
+                  {th("quantity", "Quantity")}
+                  {th("recordedDate", "Recording date")}
+                  <th className="text-right">Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {sorted.map((r, i) => {
-                  const idx = rows.indexOf(r);
-                  return (
-                    <tr
-                      key={`${r.job}-${i}`}
-                      className="border-t hover:bg-slate-50 cursor-pointer"
-                      onClick={() => openEdit(i)}
-                    >
-                      <td className="py-2 font-medium text-slate-700">{r.job}</td>
-                      <td>{r.quantity}</td>
-                      <td>{r.step}</td>
-                      <td>{r.recordedDate}</td>
-                      <td>{r.dueDate}</td>
-                      <td>{r.recorder}</td>
-                      <td className="text-right">
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if (idx !== -1) {
-                              setEditIdx(idx);
-                              setEditDraft({ ...rows[idx] });
-                            }
-                          }}
-                          type="button"
-                        >
-                          Edit
-                        </Button>
-                      </td>
-                    </tr>
-                  );
-                })}
+                {sorted.map((r, i) => (
+                  <tr key={i} className="border-t">
+                    <td className="py-2">{r.job}</td>
+                    <td>{r.step}</td>
+                    <td>{r.quantity}</td>
+                    <td>{r.recordedDate}</td>
+                    <td className="text-right">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => openEdit(i)}
+                        disabled={!canEditPage}
+                      >
+                        Edit
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
@@ -404,23 +389,28 @@ export default function AddData() {
                 }
               />
 
-
               <div className="mt-8 flex flex-col-reverse justify-between gap-3 md:flex-row md:items-center">
-                <Button variant="destructive" onClick={remove} type="button">
+                <Button
+                  variant="destructive"
+                  onClick={remove}
+                  disabled={!canEditPage}
+                >
                   Delete
                 </Button>
-                <div className="flex justify-end gap-3">
+                <div className="flex gap-3">
                   <Button
-                    variant="secondary"
+                    variant="outline"
                     onClick={() => {
                       setEditIdx(null);
                       setEditDraft(emptyDraft());
                     }}
-                    type="button"
                   >
                     Cancel
                   </Button>
-                  <Button onClick={update} disabled={!isEditValid} type="button">
+                  <Button
+                    onClick={update}
+                    disabled={!canEditPage || !isEditValid}
+                  >
                     Update
                   </Button>
                 </div>
