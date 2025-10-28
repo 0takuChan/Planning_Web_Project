@@ -14,13 +14,15 @@ import Planning from "./pages/Planning";
 import AddData from "./pages/AddData";
 import Admin from "./pages/Admin";
 import Login from "./pages/Login";
-import { isLoggedIn } from "./lib/auth";
 
 const queryClient = new QueryClient();
+
+import { isLoggedIn } from "./lib/auth";
 
 function ProtectedRoute({ children }: { children: JSX.Element }) {
   return isLoggedIn() ? children : <Navigate to="/login" replace />;
 }
+
 
 const App = () => (
   <QueryClientProvider client={queryClient}>

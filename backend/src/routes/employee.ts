@@ -5,11 +5,11 @@ import bcrypt from "bcrypt";
 const router = express.Router();
 const prisma = new PrismaClient();
 
-// 📍 ดึงพนักงานทั้งหมด
+// ดึงพนักงานทั้งหมด
 router.get("/", async (req: Request, res: Response): Promise<void> => {
   try {
     const employees = await prisma.employee.findMany({
-      include: { role: true }, // ✅ ดึงข้อมูล role ด้วย (ถ้าต้องการ)
+      include: { role: true }, // ดึงข้อมูล role 
     });
     res.json(employees);
   } catch (error) {
@@ -18,7 +18,7 @@ router.get("/", async (req: Request, res: Response): Promise<void> => {
   }
 });
 
-// 📍 ดึงพนักงานตาม ID
+// ดึงพนักงานตาม ID
 router.get("/:id", async (req: Request, res: Response): Promise<void> => {
   const { id } = req.params;
   try {
@@ -37,7 +37,7 @@ router.get("/:id", async (req: Request, res: Response): Promise<void> => {
   }
 });
 
-// 📍 เพิ่มพนักงาน
+// เพิ่มพนักงาน
 router.post("/", async (req: Request, res: Response): Promise<void> => {
   try {
     const { fullname, username, password, email, phone, role_id } = req.body;
@@ -72,7 +72,7 @@ router.post("/", async (req: Request, res: Response): Promise<void> => {
   }
 });
 
-// 📍 แก้ไขพนักงาน
+// แก้ไขพนักงาน
 router.put("/:id", async (req: Request, res: Response): Promise<void> => {
   const { id } = req.params;
   const { fullname, email, phone, role_id } = req.body;
@@ -88,7 +88,7 @@ router.put("/:id", async (req: Request, res: Response): Promise<void> => {
   }
 });
 
-// 📍 ลบพนักงาน
+// ลบพนักงาน
 router.delete("/:id", async (req: Request, res: Response): Promise<void> => {
   const { id } = req.params;
   try {
