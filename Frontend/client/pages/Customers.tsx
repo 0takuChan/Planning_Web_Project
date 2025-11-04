@@ -2,8 +2,20 @@ import { useEffect, useState, useMemo } from "react";
 import AppLayout from "@/components/layout/Sidebar";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { usePermissions } from "@/App";
 import { toast } from "@/hooks/use-toast";
+import { Trash2 } from "lucide-react";
 
 interface Customer {
   id: number;
@@ -43,6 +55,8 @@ export default function Customers() {
     key: "name", 
     dir: 1 
   });
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [customerToDelete, setCustomerToDelete] = useState<Customer | null>(null);
 
   // Validation functions
   const isValidEmail = (email: string) => {
@@ -85,7 +99,7 @@ export default function Customers() {
         phone: c.phone || "",
         email: c.email || "",
         location: c.address_detail || "",
-        orders: c.orders || 0
+        orders: c._count?.jobs || 0  // ใช้ข้อมูลจาก API
       }));
       
       setRows(customers);
@@ -144,17 +158,15 @@ export default function Customers() {
       
       const newCustomer = await response.json();
       
+      // เพิ่มลูกค้าใหม่ในรายการ
       setRows((current) => [...current, {
         id: newCustomer.customer_id,
         name: newCustomer.fullname,
         phone: newCustomer.phone || "",
         email: newCustomer.email || "",
         location: newCustomer.address_detail || "",
-        orders: 0  // ลูกค้าใหม่จะมี 0 orders
+        orders: newCustomer._count?.jobs || 0  // ใช้ข้อมูลจาก API
       }]);
-      
-      // หลังจากเพิ่มสำเร็จ ให้ refresh ข้อมูลใหม่
-      await fetchCustomers();
       
       setOpen(false);
       setDraft({ name: "", phone: "", email: "", location: "", orders: 0 });
@@ -222,6 +234,7 @@ export default function Customers() {
       
       const updatedCustomer = await response.json();
       
+      // ใช้ editDraft.id แทน editIndex เพื่อหา customer ที่ถูกต้อง
       setRows((current) =>
         current.map((row) =>
           row.id === editDraft.id
@@ -231,14 +244,11 @@ export default function Customers() {
                 phone: updatedCustomer.phone || "",
                 email: updatedCustomer.email || "",
                 location: updatedCustomer.address_detail || "",
-                // orders ไม่เปลี่ยน เพราะการ edit ไม่ได้เปลี่ยนจำนวน job
+                orders: updatedCustomer._count?.jobs || row.orders,
               }
             : row
         )
       );
-      
-      // หลังจากแก้ไขสำเร็จ ให้ refresh ข้อมูลใหม่
-      await fetchCustomers();
       
       setEditIndex(null);
       setEditDraft({ id: 0, name: "", phone: "", email: "", location: "", orders: 0 });
@@ -257,9 +267,16 @@ export default function Customers() {
     }
   };
 
-  const handleDelete = async (id: number) => {
+  const handleDelete = async (customer: Customer) => {
+    setCustomerToDelete(customer);
+    setDeleteDialogOpen(true);
+  };
+
+  const confirmDelete = async () => {
+    if (!customerToDelete) return;
+
     try {
-      const response = await fetch(`http://localhost:4000/api/customers/${id}`, {
+      const response = await fetch(`http://localhost:4000/api/customers/${customerToDelete.id}`, {
         method: "DELETE",
       });
 
@@ -271,14 +288,18 @@ export default function Customers() {
             title: "ไม่สามารถลบลูกค้าได้",
             description: errorData.details || errorData.message || "มีงานที่เชื่อมโยงกับลูกค้านี้อยู่",
           });
+          setDeleteDialogOpen(false);
+          setCustomerToDelete(null);
           return;
         }
         throw new Error(`HTTP ${response.status}`);
       }
       
-      setRows((current) => current.filter((row) => row.id !== id));
+      setRows((current) => current.filter((row) => row.id !== customerToDelete.id));
       setEditIndex(null);
       setEditDraft({ id: 0, name: "", phone: "", email: "", location: "", orders: 0 });
+      setDeleteDialogOpen(false);
+      setCustomerToDelete(null);
       
       toast({
         title: "ลบลูกค้าเรียบร้อย",
@@ -291,6 +312,8 @@ export default function Customers() {
         title: "เกิดข้อผิดพลาด",
         description: "ไม่สามารถลบข้อมูลลูกค้าได้ กรุณาลองใหม่อีกครั้ง",
       });
+      setDeleteDialogOpen(false);
+      setCustomerToDelete(null);
     }
   };
 
@@ -304,7 +327,7 @@ export default function Customers() {
 
   const openEdit = (i: number) => { 
     setEditIndex(i); 
-    const customer = rows[i];
+    const customer = sorted[i]; // เปลี่ยนจาก rows[i] เป็น sorted[i]
     setEditDraft({
       ...customer,
       name: customer.name || "",
@@ -506,9 +529,11 @@ export default function Customers() {
                 <div className="mt-6 flex justify-between gap-3">
                   <Button
                     variant="destructive"
-                    onClick={() => handleDelete(editDraft.id)}
+                    onClick={() => handleDelete(editDraft)}
                     disabled={!canEditPage}
+                    className="flex items-center gap-2"
                   >
+                    <Trash2 className="h-4 w-4" />
                     Delete
                   </Button>
                   <div className="flex gap-3">
@@ -533,6 +558,52 @@ export default function Customers() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <Trash2 className="h-5 w-5 text-red-500" />
+              Delete Customer Confirmation
+            </AlertDialogTitle>
+            <AlertDialogDescription className="space-y-3">
+              <div>
+                Are you sure you want to delete this customer? This action cannot be undone.
+              </div>
+              {customerToDelete && (
+                <div className="bg-gray-50 p-3 rounded-lg border">
+                  <div className="text-sm font-medium text-gray-900">Customer Details:</div>
+                  <div className="text-sm text-gray-600 mt-1 space-y-1">
+                    <div><strong>Name:</strong> {customerToDelete.name}</div>
+                    <div><strong>Email:</strong> {customerToDelete.email}</div>
+                    <div><strong>Phone:</strong> {formatPhoneDisplay(customerToDelete.phone)}</div>
+                    <div><strong>Location:</strong> {customerToDelete.location}</div>
+                    <div><strong>Orders:</strong> {customerToDelete.orders}</div>
+                  </div>
+                </div>
+              )}
+              <div className="text-red-600 text-sm font-medium">
+                ⚠️ This will permanently remove the customer and may affect related jobs.
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => {
+              setDeleteDialogOpen(false);
+              setCustomerToDelete(null);
+            }}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmDelete}
+              className="bg-red-600 hover:bg-red-700 focus:ring-red-600"
+            >
+              Delete Customer
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </AppLayout>
   );
 }

@@ -9,13 +9,24 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import {
   Select,
   SelectTrigger,
   SelectContent,
   SelectItem,
   SelectValue,
 } from "@/components/ui/select";
-import { Calendar } from "lucide-react";
+import { Calendar, Trash2 } from "lucide-react";
 import * as Popover from "@radix-ui/react-popover";
 import { usePermissions } from "@/App";
 
@@ -49,17 +60,20 @@ interface Customer {
 function generateJobId(existing: string[]): string {
   const now = new Date();
   const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, "0");
-  const day = String(now.getDate()).padStart(2, "0");
-  let id = "";
-  let tries = 0;
-  do {
-    const time = Date.now().toString();
-    id = `JO-${year}-${month}${day}${time}`;
-    tries++;
-    if (tries > 10) break;
-  } while (existing.includes(id));
-  return id;
+  let sequence = 1;
+  
+  // หาลำดับล่าสุด
+  const currentYearJobs = existing.filter(id => id.startsWith(`JO-${year}-`));
+  if (currentYearJobs.length > 0) {
+    const sequences = currentYearJobs
+      .map(id => parseInt(id.split('-')[2]))
+      .filter(num => !isNaN(num));
+    if (sequences.length > 0) {
+      sequence = Math.max(...sequences) + 1;
+    }
+  }
+  
+  return `JO-${year}-${sequence.toString().padStart(4, "0")}`;
 }
 
 // ฟังก์ชันแปลง yyyy-mm-dd เป็น dd/mm/yyyy
@@ -100,6 +114,7 @@ export default function Jobs() {
   const [steps, setSteps] = useState<Step[]>([]);
   const [loading, setLoading] = useState(false);
   const [currentEmployeeId, setCurrentEmployeeId] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
   
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<JobRow>({
@@ -126,6 +141,7 @@ export default function Jobs() {
     dir: 1,
   });
 
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   // Fetch current user's employee_id จาก localStorage
   useEffect(() => {
     const userStr = localStorage.getItem("user");
@@ -138,6 +154,7 @@ export default function Jobs() {
         }
       } catch (e) {
         console.error("Failed to parse user:", e);
+        setError("Failed to get user information");
       }
     }
   }, []);
@@ -146,44 +163,59 @@ export default function Jobs() {
   useEffect(() => {
     const fetchData = async () => {
       setLoading(true);
+      setError(null);
+      
       try {
-        // Fetch customers
-        const customersRes = await fetch("http://localhost:4000/api/customers");
-        if (customersRes.ok) {
-          const customersData = await customersRes.json();
-          setCustomers(customersData);
-        }
+        // Fetch ข้อมูลทั้งหมดแบบ parallel
+        const [customersRes, stepsRes, jobsRes, jobStepsRes] = await Promise.all([
+          fetch("http://localhost:4000/api/customers"),
+          fetch("http://localhost:4000/api/steps"),
+          fetch("http://localhost:4000/api/jobs"),
+          fetch("http://localhost:4000/api/jobsteps")
+        ]);
 
-        // Fetch steps
-        const stepsRes = await fetch("http://localhost:4000/api/steps");
-        if (stepsRes.ok) {
-          const stepsData = await stepsRes.json();
-          setSteps(stepsData);
-          console.log("Steps loaded:", stepsData); // Debug log
-        }
+        // ตรวจสอบ response status
+        if (!customersRes.ok) throw new Error(`Customers API: ${customersRes.status}`);
+        if (!stepsRes.ok) throw new Error(`Steps API: ${stepsRes.status}`);
+        if (!jobsRes.ok) throw new Error(`Jobs API: ${jobsRes.status}`);
+        if (!jobStepsRes.ok) throw new Error(`JobSteps API: ${jobStepsRes.status}`);
 
-        // Fetch jobs
-        const jobsRes = await fetch("http://localhost:4000/api/jobs");
-        if (jobsRes.ok) {
-          const jobsData = await jobsRes.json();
+        const [customersData, stepsData, jobsData, jobStepsData] = await Promise.all([
+          customersRes.json(),
+          stepsRes.json(),
+          jobsRes.json(),
+          jobStepsRes.json()
+        ]);
+
+        console.log("Fetched data:", { customersData, stepsData, jobsData, jobStepsData });
+
+        setCustomers(customersData);
+        setSteps(stepsData);
+
+        // Map jobs data พร้อมกับ JobSteps
+        const jobsWithSteps = jobsData.map((job: any) => {
+          // หา JobSteps ที่เป็นของ job นี้
+          const relatedJobSteps = jobStepsData.filter((js: any) => js.job_id === job.job_id);
+          const selectedSteps = relatedJobSteps.map((js: any) => js.step_id);
           
-          // แปลงข้อมูลจาก API format เป็น frontend format
-          const mappedJobs: JobRow[] = jobsData.map((job: any) => ({
+          return {
             id: job.job_id,
-            customer: job.customer?.fullname || job.customer?.name || "",
+            customer: job.customer?.fullname || job.customer?.name || "Unknown Customer",
             job: job.job_number,
             quantity: job.total_quantity || 0,
             date: job.end_date ? formatDateDMY(job.end_date.split('T')[0]) : "",
-            selectedSteps: [], // TODO: ดึงจาก JobStep table
+            selectedSteps: selectedSteps,
             fabric: job.type_of_fabric || "",
             customer_id: job.customer_id,
             employee_id: job.employee_id,
-          }));
+          };
+        });
           
-          setJobs(mappedJobs);
-        }
+        setJobs(jobsWithSteps);
+        
       } catch (error) {
         console.error("Error fetching data:", error);
+        setError(error instanceof Error ? error.message : "Failed to fetch data");
       } finally {
         setLoading(false);
       }
@@ -196,13 +228,28 @@ export default function Jobs() {
     () =>
       jobs
         .slice()
-        .sort((a, b) => (a[sort.key] > b[sort.key] ? 1 : -1) * sort.dir),
+        .sort((a, b) => {
+          const aVal = a[sort.key];
+          const bVal = b[sort.key];
+          
+          // Handle different data types
+          if (typeof aVal === 'string' && typeof bVal === 'string') {
+            return aVal.localeCompare(bVal) * sort.dir;
+          }
+          
+          if (typeof aVal === 'number' && typeof bVal === 'number') {
+            return (aVal - bVal) * sort.dir;
+          }
+          
+          // Fallback
+          return (aVal > bVal ? 1 : -1) * sort.dir;
+        }),
     [jobs, sort]
   );
 
   const th = (k: keyof JobRow, label: string) => (
     <th
-      className="cursor-pointer"
+      className="cursor-pointer hover:bg-gray-50 px-2 py-1 rounded"
       onClick={() =>
         setSort((s) => ({
           key: k,
@@ -219,7 +266,7 @@ export default function Jobs() {
 
     // ตรวจสอบว่ามี employee_id หรือไม่
     if (!currentEmployeeId) {
-      alert("Employee ID not found. Please login again.");
+      setError("Employee ID not found. Please login again.");
       return;
     }
 
@@ -229,14 +276,13 @@ export default function Jobs() {
       );
 
       if (!selectedCustomer) {
-        console.error("Customer not found");
-        alert("Please select a valid customer");
+        setError("Please select a valid customer");
         return;
       }
 
       const payload = {
         created_date: new Date().toISOString().split('T')[0],
-        end_date: draft.date,
+        end_date: formatDateYMD(draft.date),
         customer_id: selectedCustomer.customer_id,
         total_quantity: Number(draft.quantity),
         clothing_type: "Standard",
@@ -245,7 +291,7 @@ export default function Jobs() {
         delivery_location: selectedCustomer.address_detail || "No address provided",
       };
 
-      console.log("Sending payload:", payload); // Debug log
+      console.log("Creating job with payload:", payload);
 
       const response = await fetch("http://localhost:4000/api/jobs", {
         method: "POST",
@@ -258,40 +304,36 @@ export default function Jobs() {
       if (!response.ok) {
         const errorText = await response.text();
         console.error("Server error:", errorText);
-        
-        if (errorText.includes("Foreign key constraint")) {
-          alert("Employee ID not found in database. Please contact administrator.");
-        } else {
-          alert(`Failed to create job: ${errorText}`);
-        }
-        
-        throw new Error(`HTTP ${response.status}: ${errorText}`);
+        throw new Error(`Failed to create job: ${errorText}`);
       }
 
       const newJob = await response.json();
-      console.log("API Response:", newJob); // Debug log
+      console.log("Job created:", newJob);
       
       // สร้าง JobStep สำหรับ steps ที่เลือก
-      if (draft.selectedSteps.length > 0) {
-        for (const stepId of draft.selectedSteps) {
-          try {
-            await fetch("http://localhost:4000/api/jobsteps", {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify({
-                job_id: newJob.job_id,
-                step_id: stepId,
-              }),
-            });
-          } catch (error) {
-            console.error("Failed to create job step:", error);
-          }
-        }
+      const jobStepPromises = draft.selectedSteps.map(stepId =>
+        fetch("http://localhost:4000/api/jobsteps", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            job_id: newJob.job_id,
+            step_id: stepId,
+          }),
+        })
+      );
+
+      // รอให้ JobSteps สร้างเสร็จทั้งหมด
+      const jobStepResults = await Promise.allSettled(jobStepPromises);
+      
+      // Check for failures
+      const failedJobSteps = jobStepResults.filter(result => result.status === 'rejected');
+      if (failedJobSteps.length > 0) {
+        console.warn("Some job steps failed to create:", failedJobSteps);
       }
       
-      // แปลงเมื่อแสดงใน UI เท่านั้น
+      // แปลงเมื่อแสดงใน UI
       const mappedJob: JobRow = {
         id: newJob.job_id,
         customer: draft.customer,
@@ -316,15 +358,18 @@ export default function Jobs() {
         fabric: "",
       });
       setOpen(false);
+      setError(null);
       
     } catch (error) {
       console.error("Failed to add job:", error);
+      setError(error instanceof Error ? error.message : "Failed to create job");
     }
   };
 
   const openEdit = (i: number) => {
     const job = sorted[i];
-    setEditIndex(jobs.findIndex(j => j.id === job.id));
+    const originalIndex = jobs.findIndex(j => j.id === job.id);
+    setEditIndex(originalIndex);
     setEditDraft({...job});
   };
 
@@ -340,12 +385,10 @@ export default function Jobs() {
       );
 
       if (!selectedCustomer) {
-        console.error("Customer not found");
-        alert("Please select a valid customer");
+        setError("Please select a valid customer");
         return;
       }
 
-      // แก้ไข payload ให้ใช้ current employee_id หรือเก็บ original
       const payload = {
         job_number: editDraft.job,
         created_date: new Date().toISOString().split('T')[0],
@@ -358,7 +401,7 @@ export default function Jobs() {
         delivery_location: selectedCustomer.address_detail || "No address provided",
       };
 
-      console.log("Update payload:", payload); // Debug log
+      console.log("Updating job with payload:", payload);
 
       const response = await fetch(`http://localhost:4000/api/jobs/${jobId}`, {
         method: "PUT",
@@ -371,18 +414,48 @@ export default function Jobs() {
       if (!response.ok) {
         const errorText = await response.text();
         console.error("Server error:", errorText);
-        
-        if (errorText.includes("Foreign key constraint")) {
-          alert("Employee ID not found. Please check the data.");
-        } else {
-          alert(`Failed to update job: ${errorText}`);
-        }
-        
-        throw new Error(`HTTP ${response.status}: ${errorText}`);
+        throw new Error(`Failed to update job: ${errorText}`);
       }
 
       const updatedJob = await response.json();
-      console.log("Update response:", updatedJob); // Debug log
+      console.log("Job updated:", updatedJob);
+
+      // อัปเดต JobSteps
+      // ลบ JobSteps เก่าทั้งหมดก่อน
+      try {
+        const existingJobStepsRes = await fetch("http://localhost:4000/api/jobsteps");
+        if (existingJobStepsRes.ok) {
+          const allJobSteps = await existingJobStepsRes.json();
+          const jobStepsToDelete = allJobSteps.filter((js: any) => js.job_id === jobId);
+          
+          // ลบ JobSteps เก่า
+          await Promise.all(
+            jobStepsToDelete.map((js: any) =>
+              fetch(`http://localhost:4000/api/jobsteps/${js.job_step_id}`, {
+                method: "DELETE"
+              })
+            )
+          );
+          
+          // สร้าง JobSteps ใหม่
+          await Promise.all(
+            editDraft.selectedSteps.map(stepId =>
+              fetch("http://localhost:4000/api/jobsteps", {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                  job_id: jobId,
+                  step_id: stepId,
+                }),
+              })
+            )
+          );
+        }
+      } catch (jsError) {
+        console.warn("Failed to update job steps:", jsError);
+      }
 
       // Update local state
       setJobs(prev => prev.map((job, idx) => 
@@ -398,9 +471,11 @@ export default function Jobs() {
         selectedSteps: [],
         fabric: "",
       });
+      setError(null);
       
     } catch (error) {
       console.error("Failed to update job:", error);
+      setError(error instanceof Error ? error.message : "Failed to update job");
     }
   };
 
@@ -418,16 +493,19 @@ export default function Jobs() {
       if (!response.ok) {
         const errorText = await response.text();
         console.error("Server error:", errorText);
-        alert(`Failed to delete job: ${errorText}`);
-        throw new Error(`HTTP ${response.status}: ${errorText}`);
+        throw new Error(`Failed to delete job: ${errorText}`);
       }
 
       // Remove from local state
       setJobs(prev => prev.filter((_, idx) => idx !== editIndex));
       setEditIndex(null);
+      setDeleteDialogOpen(false);
+      setError(null);
       
     } catch (error) {
       console.error("Failed to delete job:", error);
+      setError(error instanceof Error ? error.message : "Failed to delete job");
+      setDeleteDialogOpen(false);
     }
   };
 
@@ -472,7 +550,7 @@ export default function Jobs() {
     }
   };
 
-  // ปรับ validation ให้รอ employee_id
+  // ปรับ validation
   const isAddValid =
     draft.customer.trim() !== "" &&
     draft.job.trim() !== "" &&
@@ -481,7 +559,7 @@ export default function Jobs() {
     draft.fabric.trim() !== "" &&
     customers.some(c => c.fullname === draft.customer || c.name === draft.customer) &&
     currentEmployeeId !== null &&
-    draft.selectedSteps.length > 0; // เปลี่ยนจาก boolean check เป็น array length
+    draft.selectedSteps.length > 0;
 
   // เพิ่มฟังก์ชันสำหรับ get วันที่ปัจจุบันในรูปแบบ yyyy-mm-dd
   const getTodayDate = () => {
@@ -493,7 +571,7 @@ export default function Jobs() {
     return (
       <AppLayout>
         <div className="flex items-center justify-center h-64">
-          <div className="text-slate-600">Loading...</div>
+          <div className="text-slate-600">Loading jobs data...</div>
         </div>
       </AppLayout>
     );
@@ -503,26 +581,48 @@ export default function Jobs() {
     <AppLayout>
       <div className="space-y-4">
         <div className="rounded-xl bg-gradient-to-r from-[hsl(var(--brand-start))] to-[hsl(var(--brand-end))] text-white p-6 shadow">
-          <h1 className="text-2xl font-bold">Job</h1>
+          <h1 className="text-2xl font-bold">Job Management</h1>
         </div>
+        
+        {error && (
+          <div className="rounded-lg bg-red-50 border border-red-200 p-4">
+            <div className="text-red-800 text-sm">{error}</div>
+            <button 
+              onClick={() => setError(null)}
+              className="text-red-600 text-xs underline mt-1"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
+        
         <div className="rounded-lg border bg-white p-4">
           <div className="flex items-center justify-between">
-            <div className="text-slate-600">Job • {jobs.length} total</div>
+            <div className="text-slate-600">
+              Jobs • {jobs.length} total
+              {currentEmployeeId && (
+                <span className="text-xs text-slate-400 ml-2">
+                  (Employee ID: {currentEmployeeId})
+                </span>
+              )}
+            </div>
             <Dialog open={open} onOpenChange={setOpen}>
               <DialogTrigger asChild>
-                <Button disabled={!canEditPage}>Add Job</Button>
+                <Button disabled={!canEditPage || !currentEmployeeId}>
+                  Add Job
+                </Button>
               </DialogTrigger>
-              <DialogContent className="max-w-3xl p-0 overflow-hidden">
+              <DialogContent className="max-w-4xl p-0 overflow-hidden">
                 <div className="grid grid-cols-1 md:grid-cols-2">
                   <div className="p-6">
                     <DialogHeader>
-                      <DialogTitle className="text-xl">Add Job</DialogTitle>
+                      <DialogTitle className="text-xl">Add New Job</DialogTitle>
                     </DialogHeader>
-                    <div className="mt-4 space-y-3 text-sm">
+                    <div className="mt-4 space-y-4 text-sm">
                       <div>
-                        <label className="text-xs text-slate-500">Customer</label>
+                        <label className="text-xs text-slate-500 font-medium">Customer *</label>
                         <select
-                          className="mt-1 w-full border rounded px-3 py-2 bg-white"
+                          className="mt-1 w-full border rounded px-3 py-2 bg-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
                           value={draft.customer}
                           onChange={(e) => handleCustomerChange(e.target.value)}
                         >
@@ -535,18 +635,19 @@ export default function Jobs() {
                         </select>
                       </div>
                       <div>
-                        <label className="text-xs text-slate-500">Job</label>
+                        <label className="text-xs text-slate-500 font-medium">Job Number</label>
                         <div className="mt-1 w-full border rounded px-3 py-2 bg-gray-50 text-slate-700">
-                          {draft.job || "-"}
+                          {draft.job || "Auto-generated"}
                         </div>
                       </div>
                       <div>
-                        <label className="text-xs text-slate-500">Quantity</label>
+                        <label className="text-xs text-slate-500 font-medium">Quantity *</label>
                         <input
-                          className="mt-1 w-full border rounded px-3 py-2"
-                          placeholder="Quantity"
+                          className="mt-1 w-full border rounded px-3 py-2 focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                          placeholder="Enter quantity"
                           type="number"
-                          value={draft.quantity}
+                          min="1"
+                          value={draft.quantity || ""}
                           onChange={(e) =>
                             setDraft({
                               ...draft,
@@ -556,22 +657,19 @@ export default function Jobs() {
                         />
                       </div>
                       <div>
-                        <label className="text-xs text-slate-500">Date</label>
-                        <div className="relative">
-                          <input
-                            className="mt-1 w-full border rounded px-3 py-2 pr-10"
-                            type="date"
-                            value={formatDateYMD(draft.date)}
-                            min={getTodayDate()}
-                            onChange={(e) =>
-                              setDraft({ ...draft, date: formatDateDMY(e.target.value) })
-                            }
-                            id="job-date-input"
-                          />
-                        </div>
+                        <label className="text-xs text-slate-500 font-medium">Due Date *</label>
+                        <input
+                          className="mt-1 w-full border rounded px-3 py-2 focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                          type="date"
+                          value={formatDateYMD(draft.date)}
+                          min={getTodayDate()}
+                          onChange={(e) =>
+                            setDraft({ ...draft, date: formatDateDMY(e.target.value) })
+                          }
+                        />
                       </div>
                       <div>
-                        <label className="text-xs text-slate-500">Fabric Type</label>
+                        <label className="text-xs text-slate-500 font-medium">Fabric Type *</label>
                         <Select
                           value={draft.fabric}
                           onValueChange={(value) =>
@@ -592,7 +690,7 @@ export default function Jobs() {
                           </SelectContent>
                         </Select>
                       </div>
-                      <div className="flex justify-end gap-2 pt-2">
+                      <div className="flex justify-end gap-2 pt-4">
                         <Button variant="outline" onClick={() => setOpen(false)}>
                           Cancel
                         </Button>
@@ -601,86 +699,104 @@ export default function Jobs() {
                           disabled={!canEditPage || !isAddValid}
                           className={!isAddValid ? "opacity-50 cursor-not-allowed" : ""}
                         >
-                          Add
+                          Create Job
                         </Button>
                       </div>
                     </div>
                   </div>
                   <div className="p-6 bg-slate-50 md:bg-gradient-to-br md:from-[hsl(var(--brand-start))] md:to-[hsl(var(--brand-end))]">
                     <div className="rounded-lg border bg-white/90 backdrop-blur p-4 shadow">
-                      <div className="font-medium mb-2">Step</div>
+                      <div className="font-medium mb-2">Production Steps *</div>
                       <div className="text-xs text-slate-500 mb-3">
-                        Follow the steps below to complete the sewing process.
+                        Select the steps required for this job. At least one step must be selected.
                       </div>
-                      <div className="space-y-2 text-sm">
+                      <div className="space-y-2 text-sm max-h-80 overflow-y-auto">
                         {steps.map((step) => (
                           <label
                             key={step.step_id}
-                            className="flex items-center justify-between rounded border px-3 py-2"
+                            className="flex items-center justify-between rounded border px-3 py-2 hover:bg-gray-50 cursor-pointer"
                           >
                             <span className="capitalize">{step.step_name}</span>
                             <input
                               type="checkbox"
                               checked={draft.selectedSteps.includes(step.step_id)}
                               onChange={() => toggleStepSelection(step.step_id, false)}
+                              className="rounded"
                             />
                           </label>
                         ))}
                       </div>
+                      {draft.selectedSteps.length === 0 && (
+                        <div className="text-xs text-red-500 mt-2">
+                          Please select at least one step
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
               </DialogContent>
             </Dialog>
           </div>
-          <div className="mt-3 overflow-x-auto">
+          <div className="mt-4 overflow-x-auto">
             <table className="min-w-[800px] w-full text-sm">
-              <thead className="text-slate-500">
+              <thead className="text-slate-500 bg-gray-50">
                 <tr>
                   {th("customer", "Customer")}
-                  {th("job", "Job")}
+                  {th("job", "Job Number")}
                   {th("quantity", "Quantity")}
-                  {th("date", "Date")}
-                  <th>Step</th>
-                  {th("fabric", "Fabric")}
-                  <th className="text-right">Actions</th>
+                  {th("date", "Due Date")}
+                  <th className="px-2 py-2">Production Steps</th>
+                  {th("fabric", "Fabric Type")}
+                  <th className="text-right px-2 py-2">Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {sorted.map((r, i) => (
-                  <tr key={r.id || i} className="border-t">
-                    <td className="py-2 font-medium text-slate-700">{r.customer}</td>
-                    <td>{r.job}</td>
-                    <td>{r.quantity}</td>
-                    <td>{r.date}</td>
-                    <td>
-                      <div className="flex flex-wrap gap-1">
-                        {r.selectedSteps.map(stepId => {
-                          const step = steps.find(s => s.step_id === stepId);
-                          return step ? (
-                            <span
-                              key={stepId}
-                              className="inline-block px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded"
-                            >
-                              {step.step_name}
-                            </span>
-                          ) : null;
-                        })}
-                      </div>
-                    </td>
-                    <td className="capitalize">{r.fabric}</td>
-                    <td className="text-right">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => openEdit(i)}
-                        disabled={!canEditPage}
-                      >
-                        Edit
-                      </Button>
+                {sorted.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="py-8 text-center text-slate-400">
+                      No jobs found. Click "Add Job" to create your first job.
                     </td>
                   </tr>
-                ))}
+                ) : (
+                  sorted.map((r, i) => (
+                    <tr key={r.id || i} className="border-t hover:bg-gray-50">
+                      <td className="py-3 px-2 font-medium text-slate-700">{r.customer}</td>
+                      <td className="py-3 px-2 font-mono text-sm">{r.job}</td>
+                      <td className="py-3 px-2">{r.quantity}</td>
+                      <td className="py-3 px-2">{r.date}</td>
+                      <td className="py-3 px-2">
+                        <div className="flex flex-wrap gap-1">
+                          {r.selectedSteps.length > 0 ? (
+                            r.selectedSteps.map(stepId => {
+                              const step = steps.find(s => s.step_id === stepId);
+                              return step ? (
+                                <span
+                                  key={stepId}
+                                  className="inline-block px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded-full"
+                                >
+                                  {step.step_name}
+                                </span>
+                              ) : null;
+                            })
+                          ) : (
+                            <span className="text-slate-400 italic text-xs">No steps assigned</span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="py-3 px-2 capitalize">{r.fabric}</td>
+                      <td className="py-3 px-2 text-right">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => openEdit(i)}
+                          disabled={!canEditPage}
+                        >
+                          Edit
+                        </Button>
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>
@@ -688,17 +804,17 @@ export default function Jobs() {
       </div>
 
       <Dialog open={editIndex !== null} onOpenChange={(o) => { if (!o) setEditIndex(null); }}>
-        <DialogContent className="max-w-3xl p-0 overflow-hidden">
+        <DialogContent className="max-w-4xl p-0 overflow-hidden">
           <div className="grid grid-cols-1 md:grid-cols-2">
             <div className="p-6">
               <DialogHeader>
                 <DialogTitle className="text-xl">Edit Job</DialogTitle>
               </DialogHeader>
-              <div className="mt-4 space-y-3 text-sm">
+              <div className="mt-4 space-y-4 text-sm">
                 <div>
-                  <label className="text-xs text-slate-500">Customer</label>
+                  <label className="text-xs text-slate-500 font-medium">Customer</label>
                   <select
-                    className="mt-1 w-full border rounded px-3 py-2 bg-white"
+                    className="mt-1 w-full border rounded px-3 py-2 bg-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
                     value={editDraft.customer}
                     onChange={(e) =>
                       setEditDraft({ ...editDraft, customer: e.target.value })
@@ -713,13 +829,13 @@ export default function Jobs() {
                   </select>
                 </div>
                 <div>
-                  <label className="text-xs text-slate-500">Job</label>
-                  <div className="mt-1 w-full border rounded px-3 py-2 bg-gray-50 text-slate-700">
+                  <label className="text-xs text-slate-500 font-medium">Job Number</label>
+                  <div className="mt-1 w-full border rounded px-3 py-2 bg-gray-50 text-slate-700 font-mono text-sm">
                     {editDraft.job || "-"}
                   </div>
                 </div>
                 <div>
-                  <label className="text-xs text-slate-500">Fabric Type</label>
+                  <label className="text-xs text-slate-500 font-medium">Fabric Type</label>
                   <Select
                     value={editDraft.fabric}
                     onValueChange={(value) =>
@@ -741,12 +857,13 @@ export default function Jobs() {
                   </Select>
                 </div>
                 <div>
-                  <label className="text-xs text-slate-500">Quantity</label>
+                  <label className="text-xs text-slate-500 font-medium">Quantity</label>
                   <input
-                    className="mt-1 w-full border rounded px-3 py-2"
-                    placeholder="Quantity"
+                    className="mt-1 w-full border rounded px-3 py-2 focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                    placeholder="Enter quantity"
                     type="number"
-                    value={editDraft.quantity}
+                    min="1"
+                    value={editDraft.quantity || ""}
                     onChange={(e) =>
                       setEditDraft({
                         ...editDraft,
@@ -756,28 +873,67 @@ export default function Jobs() {
                   />
                 </div>
                 <div>
-                  <label className="text-xs text-slate-500">Date</label>
-                  <div className="relative">
-                    <input
-                      className="mt-1 w-full border rounded px-3 py-2 pr-10"
-                      type="date"
-                      value={formatDateYMD(editDraft.date)}
-                      min={getTodayDate()}
-                      onChange={(e) =>
-                        setEditDraft({ ...editDraft, date: formatDateDMY(e.target.value) })
-                      }
-                      id="job-edit-date-input"
-                    />
-                  </div>
+                  <label className="text-xs text-slate-500 font-medium">Due Date</label>
+                  <input
+                    className="mt-1 w-full border rounded px-3 py-2 focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                    type="date"
+                    value={formatDateYMD(editDraft.date)}
+                    min={getTodayDate()}
+                    onChange={(e) =>
+                      setEditDraft({ ...editDraft, date: formatDateDMY(e.target.value) })
+                    }
+                  />
                 </div>
                 <div className="mt-6 flex justify-between gap-3">
-                  <Button
-                    variant="destructive"
-                    onClick={handleDelete}
-                    disabled={!canEditPage}
-                  >
-                    Delete
-                  </Button>
+                  <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+                    <AlertDialogTrigger asChild>
+                      <Button
+                        variant="destructive"
+                        disabled={!canEditPage}
+                        className="flex items-center gap-2"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                        Delete Job
+                      </Button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle className="flex items-center gap-2">
+                          <Trash2 className="h-5 w-5 text-red-500" />
+                          Delete Job Confirmation
+                        </AlertDialogTitle>
+                        <AlertDialogDescription className="space-y-3">
+                          <div>
+                            Are you sure you want to delete this job? This action cannot be undone.
+                          </div>
+                          {editIndex !== null && (
+                            <div className="bg-gray-50 p-3 rounded-lg border">
+                              <div className="text-sm font-medium text-gray-900">Job Details:</div>
+                              <div className="text-sm text-gray-600 mt-1 space-y-1">
+                                <div><strong>Job Number:</strong> {jobs[editIndex]?.job}</div>
+                                <div><strong>Customer:</strong> {jobs[editIndex]?.customer}</div>
+                                <div><strong>Quantity:</strong> {jobs[editIndex]?.quantity}</div>
+                                <div><strong>Due Date:</strong> {jobs[editIndex]?.date}</div>
+                              </div>
+                            </div>
+                          )}
+                          <div className="text-red-600 text-sm font-medium">
+                            ⚠️ This will permanently remove the job and all associated production steps.
+                          </div>
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction
+                          onClick={handleDelete}
+                          className="bg-red-600 hover:bg-red-700 focus:ring-red-600"
+                        >
+                          Delete Job
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
+                  
                   <div className="flex gap-3">
                     <Button variant="outline" onClick={() => setEditIndex(null)}>
                       Cancel
@@ -786,7 +942,7 @@ export default function Jobs() {
                       onClick={handleSaveEdit}
                       disabled={!canEditPage || !isEditChanged}
                     >
-                      Save
+                      Save Changes
                     </Button>
                   </div>
                 </div>
@@ -794,21 +950,22 @@ export default function Jobs() {
             </div>
             <div className="p-6 bg-slate-50 md:bg-gradient-to-br md:from-[hsl(var(--brand-start))] md:to-[hsl(var(--brand-end))]">
               <div className="rounded-lg border bg-white/90 backdrop-blur p-4 shadow">
-                <div className="font-medium mb-2">Step</div>
+                <div className="font-medium mb-2">Production Steps</div>
                 <div className="text-xs text-slate-500 mb-3">
-                  Follow the steps below to complete the sewing process.
+                  Modify the steps required for this job.
                 </div>
-                <div className="space-y-2 text-sm">
+                <div className="space-y-2 text-sm max-h-80 overflow-y-auto">
                   {steps.map((step) => (
                     <label
                       key={step.step_id}
-                      className="flex items-center justify-between rounded border px-3 py-2"
+                      className="flex items-center justify-between rounded border px-3 py-2 hover:bg-gray-50 cursor-pointer"
                     >
                       <span className="capitalize">{step.step_name}</span>
                       <input
                         type="checkbox"
                         checked={editDraft.selectedSteps.includes(step.step_id)}
                         onChange={() => toggleStepSelection(step.step_id, true)}
+                        className="rounded"
                       />
                     </label>
                   ))}

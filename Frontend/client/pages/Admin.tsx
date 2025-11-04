@@ -15,6 +15,7 @@ interface Member {
   email: string;
   phone: string;
   role: RoleKey;
+  markedForDeletion?: boolean; // เพิ่ม flag สำหรับแสดงสถานะการลบ
 }
 
 type RoleKey = "admin" | "planner" | "orderer" | "recorder";
@@ -332,20 +333,30 @@ export default function Admin() {
     setEditDraft(createEmptyMemberFormValues());
   };
 
-  const deleteMember = async () => {
+  const deleteMember = () => {
     if (editIdx === null) return;
     const current = filteredMembers[editIdx];
     if (!current) return;
 
+    // แทนที่จะลบทันที ให้เพิ่มเข้าไปใน pending deletes และแสดงเป็น "marked for deletion"
     if (current.id > 0) {
       setDeletedIds((prev) => [...prev, current.id]);
     } else {
       setPendingCreates((prev) => prev.filter((p) => p.tempId !== current.id));
     }
 
-    setDraftMembers((existing) => existing.filter((m) => m.id !== current.id));
+    // แสดงสถานะว่า member นี้ถูกทำเครื่องหมายเพื่อลบ
+    setDraftMembers((existing) => 
+      existing.map((member) => 
+        member.id === current.id 
+          ? { ...member, markedForDeletion: true } // เพิ่ม flag สำหรับแสดงสถานะ
+          : member
+      )
+    );
+    
     setEditIdx(null);
     setEditDraft(createEmptyMemberFormValues());
+    setOpenDeleteConfirm(false);
   };
 
   const handleRoleLabelChange = (value: string) => {
@@ -368,14 +379,16 @@ export default function Admin() {
   };
 
   const handleSaveChanges = async () => {
-    if (!hasUnsavedChangesForSelectedRole) return;
+    if (!hasUnsavedChangesForSelectedRole && deletedIds.length === 0 && pendingCreates.length === 0) return;
 
     try {
+      // ลบ members ที่ถูกทำเครื่องหมายเพื่อลบ
       for (const id of deletedIds) {
         const res = await fetch(`http://localhost:4000/api/employee/${id}`, { method: "DELETE" });
         if (!res.ok) throw new Error(`Failed deleting ${id}`);
       }
 
+      // สร้าง members ใหม่
       for (const create of pendingCreates) {
         const roleIdEntry = Object.entries(roleMap).find(([k, v]) => v === create.role)?.[0];
         const role_id = roleIdEntry ? parseInt(roleIdEntry, 10) : undefined;
@@ -453,8 +466,11 @@ export default function Admin() {
         role: map[e.role_id] ?? "recorder",
       }));
 
-      setCommittedMembers(cloneMembers(mapped));
-      setDraftMembers(cloneMembers(mapped));
+      // หลังจากบันทึกเสร็จแล้ว ให้ลบ members ที่ถูกทำเครื่องหมายออกจาก UI
+      const finalMembers = mapped.filter(m => !deletedIds.includes(m.id));
+      
+      setCommittedMembers(cloneMembers(finalMembers));
+      setDraftMembers(cloneMembers(finalMembers));
       setPendingCreates([]);
       setPendingUpdates({});
       setDeletedIds([]);
@@ -541,17 +557,35 @@ export default function Admin() {
           
           <div className="rounded-lg border bg-white p-4 md:col-span-2">
             <div className="mb-3 flex items-center justify-between">
-              <div className="font-semibold">Edit Roles</div>
+              <div className="font-semibold">
+                Edit Roles
+                {pendingCreates.length > 0 && (
+                  <span className="ml-2 text-sm text-green-600">
+                    ({pendingCreates.length} member{pendingCreates.length > 1 ? 's' : ''} pending to add)
+                  </span>
+                )}
+                {deletedIds.length > 0 && (
+                  <span className="ml-2 text-sm text-red-600">
+                    ({deletedIds.length} member{deletedIds.length > 1 ? 's' : ''} marked for deletion)
+                  </span>
+                )}
+              </div>
               <div className="flex gap-2">
                 <Button variant="secondary" onClick={handleCancelChanges}>
                   Cancel
                 </Button>
                 <Button
                   onClick={handleSaveChanges}
-                  disabled={!hasUnsavedChangesForSelectedRole || !isAdmin}
+                  disabled={!hasUnsavedChangesForSelectedRole && deletedIds.length === 0 && pendingCreates.length === 0 || !isAdmin}
                   className="disabled:bg-slate-300 disabled:text-slate-600"
                 >
-                  Save changes
+                  Save changes 
+                  {(pendingCreates.length > 0 || deletedIds.length > 0) && (
+                    <span>
+                      {pendingCreates.length > 0 && ` (+${pendingCreates.length})`}
+                      {deletedIds.length > 0 && ` (-${deletedIds.length})`}
+                    </span>
+                  )}
                 </Button>
               </div>
             </div>
@@ -566,7 +600,9 @@ export default function Admin() {
             </div>
 
             <div className="mt-4 space-y-2 text-sm">
-              {filteredMembers.map((member, index) => (
+              {filteredMembers
+                .filter(member => !deletedIds.includes(member.id)) // ซ่อน members ที่ถูกทำเครื่องหมายเพื่อลบ
+                .map((member, index) => (
                 <MemberListItem
                   key={member.id}
                   member={member}

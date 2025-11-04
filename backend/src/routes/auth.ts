@@ -42,6 +42,8 @@ router.post("/login", async (req, res) => {
     user: {
       id: user.employee_id,
       fullname: user.fullname,
+      email: user.email,        // เพิ่มบรรทัดนี้
+      phone: user.phone,        // เพิ่มบรรทัดนี้
       role: user.role.role_name,
     },
   });
