@@ -21,9 +21,10 @@ export async function login(username: string, password: string): Promise<LoginRe
 
   const data: LoginResponse = await res.json();
 
-  // เก็บ token และ user ไว้ localStorage
+  // เก็บ token, user และ username ไว้ localStorage
   localStorage.setItem("token", data.token);
   localStorage.setItem("user", JSON.stringify(data.user));
+  localStorage.setItem("username", username); // เพิ่มบรรทัดนี้
 
   return data;
 }
@@ -31,6 +32,7 @@ export async function login(username: string, password: string): Promise<LoginRe
 export function logout() {
   localStorage.removeItem("token");
   localStorage.removeItem("user");
+  localStorage.removeItem("username"); // เพิ่มบรรทัดนี้
 }
 
 export function getToken() {

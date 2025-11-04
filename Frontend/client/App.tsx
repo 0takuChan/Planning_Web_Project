@@ -14,6 +14,7 @@ import Planning from "./pages/Planning";
 import AddData from "./pages/AddData";
 import Admin from "./pages/Admin";
 import Login from "./pages/Login";
+import { toast } from "@/hooks/use-toast";
 
 const queryClient = new QueryClient();
 
@@ -61,7 +62,7 @@ const PAGE_PERMISSIONS: Record<string, { view: RoleKey[], edit: RoleKey[] }> = {
     edit: ["Admin", "Recorder"],
   },
   "/admin": {
-    view: ALL_ROLES,
+    view: ["Admin"],
     edit: ["Admin"],
   },
 };
@@ -89,7 +90,20 @@ function RoleBasedRoute({ children, path }: { children: JSX.Element; path: strin
   
   const canView = permissions.view.some(r => r.toLowerCase() === role);
   
-  return canView ? children : <Navigate to="/" replace />;
+  if (!canView) {
+    // แสดง toast notification สำหรับ admin page
+    if (path === "/admin") {
+      toast({
+        title: "Access Denied",
+        description: "คุณไม่มีสิทธิ์เข้าถึงหน้า Admin เฉพาะผู้ดูแลระบบเท่านั้น",
+        variant: "destructive",
+      });
+    }
+    
+    return <Navigate to="/" replace />;
+  }
+  
+  return children;
 }
 
 export default function App() {

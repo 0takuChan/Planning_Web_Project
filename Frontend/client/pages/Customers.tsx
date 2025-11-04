@@ -3,6 +3,7 @@ import AppLayout from "@/components/layout/Sidebar";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { usePermissions } from "@/App";
+import { toast } from "@/hooks/use-toast";
 
 interface Customer {
   id: number;
@@ -43,55 +44,91 @@ export default function Customers() {
     dir: 1 
   });
 
+  // Validation functions
+  const isValidEmail = (email: string) => {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return emailRegex.test(email);
+  };
+
+  const isValidPhone = (phone: string) => {
+    // รองรับรูปแบบเบอร์ไทย: 08x-xxx-xxxx, 09x-xxx-xxxx, 06x-xxx-xxxx, 02-xxx-xxxx, +66x-xxxx-xxxx
+    const phoneRegex = /^(\+66|0)[0-9]{8,9}$/;
+    const cleanPhone = phone.replace(/[-\s]/g, ''); // ลบ - และ space
+    return phoneRegex.test(cleanPhone) && cleanPhone.length >= 9 && cleanPhone.length <= 12;
+  };
+
+  const formatPhoneDisplay = (phone: string) => {
+    const clean = phone.replace(/\D/g, '');
+    if (clean.startsWith('66')) {
+      return `+${clean.slice(0, 2)}-${clean.slice(2, 3)}-${clean.slice(3, 7)}-${clean.slice(7)}`;
+    }
+    if (clean.length === 10) {
+      return `${clean.slice(0, 3)}-${clean.slice(3, 6)}-${clean.slice(6)}`;
+    }
+    if (clean.length === 9) {
+      return `${clean.slice(0, 2)}-${clean.slice(2, 5)}-${clean.slice(5)}`;
+    }
+    return phone;
+  };
+
+  // แยก fetchCustomers ออกมาเป็น function แยก
+  const fetchCustomers = async () => {
+    setLoading(true);
+    try {
+      const response = await fetch("http://localhost:4000/api/customers");
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data = await response.json();
+      
+      const customers: Customer[] = data.map((c: any) => ({
+        id: c.customer_id,
+        name: c.fullname || "",
+        phone: c.phone || "",
+        email: c.email || "",
+        location: c.address_detail || "",
+        orders: c.orders || 0
+      }));
+      
+      setRows(customers);
+    } catch (error) {
+      console.error("Failed to fetch customers:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // Fetch customers on mount
   useEffect(() => {
-    const fetchCustomers = async () => {
-      setLoading(true);
-      try {
-        const response = await fetch("http://localhost:4000/api/customers");
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const data = await response.json();
-        
-        const customers: Customer[] = data.map((c: any) => ({
-          id: c.customer_id,
-          name: c.name,
-          phone: c.phone || "",
-          email: c.email || "",
-          location: c.location || "",
-          orders: c.orders || 0
-        }));
-        
-        setRows(customers);
-      } catch (error) {
-        console.error("Failed to fetch customers:", error);
-      } finally {
-        setLoading(false);
-      }
-    };
-
     fetchCustomers();
   }, []);
 
-  const isValidDraft = useMemo(() => 
-    draft.name.trim() !== "" && 
-    draft.email.trim() !== "" && 
-    draft.phone.trim() !== "",
-    [draft]
-  );
+  const isValidDraft = useMemo(() => {
+    return (
+      draft.name.trim() !== "" && 
+      draft.email.trim() !== "" && 
+      isValidEmail(draft.email.trim()) &&
+      draft.phone.trim() !== "" &&
+      isValidPhone(draft.phone.trim()) &&
+      draft.location.trim() !== ""
+    );
+  }, [draft]);
 
   const handleAdd = async () => {
-    if (!isValidDraft) return;
+    if (!isValidDraft) {
+      toast({
+        variant: "destructive",
+        title: "ข้อมูลไม่ถูกต้อง",
+        description: "กรุณาตรวจสอบรูปแบบอีเมลและเบอร์โทรศัพท์",
+      });
+      return;
+    }
 
     try {
       const payload = {
-        customer_code: generateCustomerCode(),
         fullname: draft.name.trim(),
         email: draft.email.trim(),
         phone: draft.phone.trim(),
         address_detail: draft.location.trim()
       };
-      
-      console.log('Sending payload:', payload); // Debug log
 
       const response = await fetch("http://localhost:4000/api/customers", {
         method: "POST",
@@ -106,26 +143,66 @@ export default function Customers() {
       }
       
       const newCustomer = await response.json();
-      console.log('API Response:', newCustomer); // Debug log
       
       setRows((current) => [...current, {
-        id: newCustomer.customer_id, // เปลี่ยนจาก customer_id
-        name: newCustomer.fullname,  // เปลี่ยนจาก name เป็น fullname
+        id: newCustomer.customer_id,
+        name: newCustomer.fullname,
         phone: newCustomer.phone || "",
         email: newCustomer.email || "",
-        location: newCustomer.address_detail || "", // เปลี่ยนจาก location เป็น address_detail
-        orders: 0
+        location: newCustomer.address_detail || "",
+        orders: 0  // ลูกค้าใหม่จะมี 0 orders
       }]);
+      
+      // หลังจากเพิ่มสำเร็จ ให้ refresh ข้อมูลใหม่
+      await fetchCustomers();
       
       setOpen(false);
       setDraft({ name: "", phone: "", email: "", location: "", orders: 0 });
+      
+      toast({
+        title: "เพิ่มลูกค้าเรียบร้อย",
+        description: `เพิ่มลูกค้า "${newCustomer.fullname}" เข้าสู่ระบบแล้ว`,
+      });
     } catch (error) {
       console.error("Failed to add customer:", error);
+      toast({
+        variant: "destructive",
+        title: "เกิดข้อผิดพลาด",
+        description: "ไม่สามารถเพิ่มลูกค้าได้ กรุณาลองใหม่อีกครั้ง",
+      });
     }
   };
 
   const handleEdit = async () => {
     if (editIndex === null) return;
+    
+    // Validate edit data
+    if (!editDraft.name.trim() || !editDraft.email.trim() || !editDraft.phone.trim() || !editDraft.location.trim()) {
+      toast({
+        variant: "destructive",
+        title: "ข้อมูลไม่ครบถ้วน",
+        description: "กรุณากรอกข้อมูลให้ครบทุกช่อง",
+      });
+      return;
+    }
+
+    if (!isValidEmail(editDraft.email.trim())) {
+      toast({
+        variant: "destructive",
+        title: "รูปแบบอีเมลไม่ถูกต้อง",
+        description: "กรุณากรอกอีเมลในรูปแบบที่ถูกต้อง เช่น example@gmail.com",
+      });
+      return;
+    }
+
+    if (!isValidPhone(editDraft.phone.trim())) {
+      toast({
+        variant: "destructive",
+        title: "รูปแบบเบอร์โทรไม่ถูกต้อง",
+        description: "กรุณากรอกเบอร์โทรในรูปแบบที่ถูกต้อง เช่น 081-234-5678",
+      });
+      return;
+    }
     
     try {
       const response = await fetch(`http://localhost:4000/api/customers/${editDraft.id}`, {
@@ -134,10 +211,10 @@ export default function Customers() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          name: editDraft.name.trim(),
+          fullname: editDraft.name.trim(),
           phone: editDraft.phone.trim(),
           email: editDraft.email.trim(),
-          location: editDraft.location.trim(),
+          address_detail: editDraft.location.trim(),
         }),
       });
 
@@ -150,19 +227,33 @@ export default function Customers() {
           row.id === editDraft.id
             ? {
                 ...row,
-                name: updatedCustomer.name,
+                name: updatedCustomer.fullname || "",
                 phone: updatedCustomer.phone || "",
                 email: updatedCustomer.email || "",
-                location: updatedCustomer.location || "",
+                location: updatedCustomer.address_detail || "",
+                // orders ไม่เปลี่ยน เพราะการ edit ไม่ได้เปลี่ยนจำนวน job
               }
             : row
         )
       );
       
+      // หลังจากแก้ไขสำเร็จ ให้ refresh ข้อมูลใหม่
+      await fetchCustomers();
+      
       setEditIndex(null);
       setEditDraft({ id: 0, name: "", phone: "", email: "", location: "", orders: 0 });
+      
+      toast({
+        title: "แก้ไขข้อมูลเรียบร้อย",
+        description: `อัปเดตข้อมูลลูกค้า "${updatedCustomer.fullname}" เรียบร้อยแล้ว`,
+      });
     } catch (error) {
       console.error("Failed to update customer:", error);
+      toast({
+        variant: "destructive",
+        title: "เกิดข้อผิดพลาด",
+        description: "ไม่สามารถแก้ไขข้อมูลลูกค้าได้ กรุณาลองใหม่อีกครั้ง",
+      });
     }
   };
 
@@ -172,13 +263,34 @@ export default function Customers() {
         method: "DELETE",
       });
 
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      if (!response.ok) {
+        const errorData = await response.json();
+        if (response.status === 400) {
+          toast({
+            variant: "destructive",
+            title: "ไม่สามารถลบลูกค้าได้",
+            description: errorData.details || errorData.message || "มีงานที่เชื่อมโยงกับลูกค้านี้อยู่",
+          });
+          return;
+        }
+        throw new Error(`HTTP ${response.status}`);
+      }
       
       setRows((current) => current.filter((row) => row.id !== id));
       setEditIndex(null);
       setEditDraft({ id: 0, name: "", phone: "", email: "", location: "", orders: 0 });
+      
+      toast({
+        title: "ลบลูกค้าเรียบร้อย",
+        description: "ข้อมูลลูกค้าถูกลบออกจากระบบแล้ว",
+      });
     } catch (error) {
       console.error("Failed to delete customer:", error);
+      toast({
+        variant: "destructive",
+        title: "เกิดข้อผิดพลาด",
+        description: "ไม่สามารถลบข้อมูลลูกค้าได้ กรุณาลองใหม่อีกครั้ง",
+      });
     }
   };
 
@@ -190,51 +302,44 @@ export default function Customers() {
     [rows, sort]
   );
 
-  const isAddValid =
-    draft.name.trim() !== "" &&
-    draft.phone.trim() !== "" &&
-    draft.email.trim() !== "" &&
-    draft.location.trim() !== "";
-
-  const addRow = () => {
-    if (!isAddValid) return;
-    const generateUniqueId = (existingIds: Set<number>): number => {
-      let id = 1;
-      while (existingIds.has(id)) {
-        id++;
-      }
-      return id;
-    };
-
-    const id = generateUniqueId(new Set(rows.map((r) => r.id)));
-    const newRow: Customer = { id, ...draft };
-    setRows((r) => r.concat(newRow));
-    setDraft({ name: "", phone: "", email: "", location: "", orders: 0 });
-    setOpen(false);
+  const openEdit = (i: number) => { 
+    setEditIndex(i); 
+    const customer = rows[i];
+    setEditDraft({
+      ...customer,
+      name: customer.name || "",
+      phone: customer.phone || "",
+      email: customer.email || "",
+      location: customer.location || ""
+    }); 
   };
-
-  const openEdit = (i: number) => { setEditIndex(i); setEditDraft(rows[i]); };
-  const isEditValid =
-    editDraft.name.trim() !== "" &&
-    editDraft.phone.trim() !== "" &&
-    editDraft.email.trim() !== "" &&
-    editDraft.location.trim() !== "";
-
-  const saveEdit = () => {
-    if (editIndex === null || !isEditValid) return;
-    setRows((r)=> r.map((row, idx)=> idx===editIndex ? { ...editDraft, id: row.id } : row));
-    setEditIndex(null);
-  };
-  const deleteRow = () => { if (editIndex === null) return; setRows((r)=> r.filter((_, idx)=> idx!==editIndex)); setEditIndex(null); };
+  
+  const isEditValid = useMemo(() => {
+    return (
+      (editDraft.name || "").trim() !== "" &&
+      (editDraft.phone || "").trim() !== "" &&
+      (editDraft.email || "").trim() !== "" &&
+      (editDraft.location || "").trim() !== "" &&
+      isValidEmail((editDraft.email || "").trim()) &&
+      isValidPhone((editDraft.phone || "").trim())
+    );
+  }, [editDraft]);
 
   const th = (k: keyof Customer, label: string) => (
     <th className="cursor-pointer" onClick={() => setSort((s) => ({ key: k, dir: s.key === k ? (s.dir === 1 ? -1 : 1) : 1 }))}>{label} {sort.key === k ? (sort.dir === 1 ? "↑" : "↓") : ""}</th>
   );
 
-  const generateCustomerCode = () => {
-    const prefix = "CUS";
-    const timestamp = Date.now().toString().slice(-6);
-    return `${prefix}${timestamp}`;
+  const getInputValidationClass = (value: string, type: 'email' | 'phone' | 'text') => {
+    if (value.trim() === "") {
+      return "border-red-500 focus:ring-2 focus:ring-red-500";
+    }
+    if (type === 'email' && !isValidEmail(value.trim())) {
+      return "border-red-500 focus:ring-2 focus:ring-red-500";
+    }
+    if (type === 'phone' && !isValidPhone(value.trim())) {
+      return "border-red-500 focus:ring-2 focus:ring-red-500";
+    }
+    return "border-slate-200 focus:ring-2 focus:ring-[hsl(var(--brand-start))]";
   };
 
   return (
@@ -254,20 +359,47 @@ export default function Customers() {
                     <DialogHeader><DialogTitle className="text-xl">Add Customer Member</DialogTitle></DialogHeader>
                     <div className="mt-4 space-y-3 text-sm">
                       <div>
-                        <label className="text-xs text-slate-500">Name</label>
-                        <input className={`mt-1 w-full border rounded px-3 py-2 ${draft.name.trim() === "" ? "border-red-500 focus:ring-2 focus:ring-red-500" : "border-slate-200 focus:ring-2 focus:ring-[hsl(var(--brand-start))]"}`} placeholder="Name" value={draft.name} onChange={(e)=>setDraft({ ...draft, name: e.target.value })} />
+                        <label className="text-xs text-slate-500">Name *</label>
+                        <input 
+                          className={`mt-1 w-full border rounded px-3 py-2 ${getInputValidationClass(draft.name, 'text')}`}
+                          placeholder="ชื่อ-นามสกุล" 
+                          value={draft.name} 
+                          onChange={(e)=>setDraft({ ...draft, name: e.target.value })} 
+                        />
                       </div>
                       <div>
-                        <label className="text-xs text-slate-500">Email</label>
-                        <input className={`mt-1 w-full border rounded px-3 py-2 ${draft.email.trim() === "" ? "border-red-500 focus:ring-2 focus:ring-red-500" : "border-slate-200 focus:ring-2 focus:ring-[hsl(var(--brand-start))]"}`} placeholder="Email" value={draft.email} onChange={(e)=>setDraft({ ...draft, email: e.target.value })} />
+                        <label className="text-xs text-slate-500">Email *</label>
+                        <input 
+                          type="email"
+                          className={`mt-1 w-full border rounded px-3 py-2 ${getInputValidationClass(draft.email, 'email')}`}
+                          placeholder="example@gmail.com" 
+                          value={draft.email} 
+                          onChange={(e)=>setDraft({ ...draft, email: e.target.value })} 
+                        />
+                        {draft.email.trim() !== "" && !isValidEmail(draft.email.trim()) && (
+                          <p className="text-xs text-red-500 mt-1">รูปแบบอีเมลไม่ถูกต้อง</p>
+                        )}
                       </div>
                       <div>
-                        <label className="text-xs text-slate-500">Phone Number</label>
-                        <input className={`mt-1 w-full border rounded px-3 py-2 ${draft.phone.trim() === "" ? "border-red-500 focus:ring-2 focus:ring-red-500" : "border-slate-200 focus:ring-2 focus:ring-[hsl(var(--brand-start))]"}`} placeholder="Phone Number" value={draft.phone} onChange={(e)=>setDraft({ ...draft, phone: e.target.value })} />
+                        <label className="text-xs text-slate-500">Phone Number *</label>
+                        <input 
+                          className={`mt-1 w-full border rounded px-3 py-2 ${getInputValidationClass(draft.phone, 'phone')}`}
+                          placeholder="081-234-5678" 
+                          value={draft.phone} 
+                          onChange={(e)=>setDraft({ ...draft, phone: e.target.value })} 
+                        />
+                        {draft.phone.trim() !== "" && !isValidPhone(draft.phone.trim()) && (
+                          <p className="text-xs text-red-500 mt-1">รูปแบบเบอร์โทรไม่ถูกต้อง</p>
+                        )}
                       </div>
                       <div>
-                        <label className="text-xs text-slate-500">Location</label>
-                        <input className={`mt-1 w-full border rounded px-3 py-2 ${draft.location.trim() === "" ? "border-red-500 focus:ring-2 focus:ring-red-500" : "border-slate-200 focus:ring-2 focus:ring-[hsl(var(--brand-start))]"}`} placeholder="Location" value={draft.location} onChange={(e)=>setDraft({ ...draft, location: e.target.value })} />
+                        <label className="text-xs text-slate-500">Location *</label>
+                        <input 
+                          className={`mt-1 w-full border rounded px-3 py-2 ${getInputValidationClass(draft.location, 'text')}`}
+                          placeholder="ที่อยู่" 
+                          value={draft.location} 
+                          onChange={(e)=>setDraft({ ...draft, location: e.target.value })} 
+                        />
                       </div>
                       <div className="flex justify-end gap-2 pt-2">
                         <Button variant="secondary" onClick={()=>setOpen(false)}>Cancel</Button>
@@ -300,7 +432,7 @@ export default function Customers() {
                 {sorted.map((r, i) => (
                   <tr key={r.id} className="border-t">
                     <td className="py-2 font-medium text-slate-700">{r.name}</td>
-                    <td>{r.phone}</td>
+                    <td>{formatPhoneDisplay(r.phone)}</td>
                     <td>{r.email}</td>
                     <td>{r.location}</td>
                     <td>{r.orders}</td>
@@ -329,20 +461,47 @@ export default function Customers() {
               <DialogHeader><DialogTitle className="text-xl">Edit Customer Member</DialogTitle></DialogHeader>
               <div className="mt-4 space-y-3 text-sm">
                 <div>
-                  <label className="text-xs text-slate-500">Name</label>
-                  <input className={`mt-1 w-full border rounded px-3 py-2 ${editDraft.name.trim() === "" ? "border-red-500 focus:ring-2 focus:ring-red-500" : "border-slate-200 focus:ring-2 focus:ring-[hsl(var(--brand-start))]"}`} placeholder="Name" value={editDraft.name} onChange={(e)=>setEditDraft({ ...editDraft, name: e.target.value })} />
+                  <label className="text-xs text-slate-500">Name *</label>
+                  <input 
+                    className={`mt-1 w-full border rounded px-3 py-2 ${getInputValidationClass(editDraft.name, 'text')}`}
+                    placeholder="ชื่อ-นามสกุล" 
+                    value={editDraft.name} 
+                    onChange={(e)=>setEditDraft({ ...editDraft, name: e.target.value })} 
+                  />
                 </div>
                 <div>
-                  <label className="text-xs text-slate-500">Email</label>
-                  <input className={`mt-1 w-full border rounded px-3 py-2 ${editDraft.email.trim() === "" ? "border-red-500 focus:ring-2 focus:ring-red-500" : "border-slate-200 focus:ring-2 focus:ring-[hsl(var(--brand-start))]"}`} placeholder="Email" value={editDraft.email} onChange={(e)=>setEditDraft({ ...editDraft, email: e.target.value })} />
+                  <label className="text-xs text-slate-500">Email *</label>
+                  <input 
+                    type="email"
+                    className={`mt-1 w-full border rounded px-3 py-2 ${getInputValidationClass(editDraft.email, 'email')}`}
+                    placeholder="example@gmail.com" 
+                    value={editDraft.email} 
+                    onChange={(e)=>setEditDraft({ ...editDraft, email: e.target.value })} 
+                  />
+                  {editDraft.email.trim() !== "" && !isValidEmail(editDraft.email.trim()) && (
+                    <p className="text-xs text-red-500 mt-1">รูปแบบอีเมลไม่ถูกต้อง</p>
+                  )}
                 </div>
                 <div>
-                  <label className="text-xs text-slate-500">Phone Number</label>
-                  <input className={`mt-1 w-full border rounded px-3 py-2 ${editDraft.phone.trim() === "" ? "border-red-500 focus:ring-2 focus:ring-red-500" : "border-slate-200 focus:ring-2 focus:ring-[hsl(var(--brand-start))]"}`} placeholder="Phone Number" value={editDraft.phone} onChange={(e)=>setEditDraft({ ...editDraft, phone: e.target.value })} />
+                  <label className="text-xs text-slate-500">Phone Number *</label>
+                  <input 
+                    className={`mt-1 w-full border rounded px-3 py-2 ${getInputValidationClass(editDraft.phone, 'phone')}`}
+                    placeholder="081-234-5678" 
+                    value={editDraft.phone} 
+                    onChange={(e)=>setEditDraft({ ...editDraft, phone: e.target.value })} 
+                  />
+                  {editDraft.phone.trim() !== "" && !isValidPhone(editDraft.phone.trim()) && (
+                    <p className="text-xs text-red-500 mt-1">รูปแบบเบอร์โทรไม่ถูกต้อง</p>
+                  )}
                 </div>
                 <div>
-                  <label className="text-xs text-slate-500">Location</label>
-                  <input className={`mt-1 w-full border rounded px-3 py-2 ${editDraft.location.trim() === "" ? "border-red-500 focus:ring-2 focus:ring-red-500" : "border-slate-200 focus:ring-2 focus:ring-[hsl(var(--brand-start))]"}`} placeholder="Location" value={editDraft.location} onChange={(e)=>setEditDraft({ ...editDraft, location: e.target.value })} />
+                  <label className="text-xs text-slate-500">Location *</label>
+                  <input 
+                    className={`mt-1 w-full border rounded px-3 py-2 ${getInputValidationClass(editDraft.location, 'text')}`}
+                    placeholder="ที่อยู่" 
+                    value={editDraft.location} 
+                    onChange={(e)=>setEditDraft({ ...editDraft, location: e.target.value })} 
+                  />
                 </div>
                 <div className="mt-6 flex justify-between gap-3">
                   <Button

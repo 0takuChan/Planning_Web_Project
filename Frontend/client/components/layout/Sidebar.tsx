@@ -1,7 +1,9 @@
 import { ReactNode, useState, useEffect } from "react";
-import { NavLink, useLocation } from "react-router-dom";
-import { Home, Users, Briefcase, Calendar as CalIcon, PlusSquare, ShieldCheck, LogOut, UserCircle, UserCog, ClipboardList, Package } from "lucide-react";
+import { NavLink, useLocation, useNavigate } from "react-router-dom";
+import { Home, Users, Briefcase, Calendar as CalIcon, PlusSquare, ShieldCheck, LogOut } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { logout } from "@/lib/auth";
+import Navbar from "./Navbar";
 import "@/styles/layout.css";
 
 interface AppLayoutProps { 
@@ -17,42 +19,14 @@ const navItems = [
   { to: "/admin", label: "Admin", icon: ShieldCheck },
 ];
 
-// Role icon mapping
-const getRoleIcon = (role: string) => {
-  const roleLower = role.toLowerCase();
-  switch (roleLower) {
-    case "admin":
-      return ShieldCheck;
-    case "planner":
-      return CalIcon;
-    case "orderer":
-      return Package;
-    case "recorder":
-      return ClipboardList;
-    default:
-      return UserCircle;
-  }
-};
-
 export default function Sidebar({ children }: AppLayoutProps) {
   const location = useLocation();
-  const [userName, setUserName] = useState<string>("");
-  const [userRole, setUserRole] = useState<string>("");
+  const navigate = useNavigate();
 
-  useEffect(() => {
-    const userStr = localStorage.getItem("user");
-    if (userStr) {
-      try {
-        const user = JSON.parse(userStr);
-        setUserName(user.fullname || user.username || "User");
-        setUserRole(user.role || "");
-      } catch (e) {
-        console.error("Failed to parse user:", e);
-      }
-    }
-  }, []);
-
-  const RoleIcon = getRoleIcon(userRole);
+  const handleLogout = () => {
+    logout();
+    navigate("/login", { replace: true });
+  };
 
   return (
     <div className="min-h-screen bg-muted/30">
@@ -90,10 +64,7 @@ export default function Sidebar({ children }: AppLayoutProps) {
               })}
             </nav>
             <button
-              onClick={() => {
-                import("@/lib/auth").then((m) => m.logout());
-                window.location.href = "/login";
-              }}
+              onClick={handleLogout}
               className="mt-4 flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-white bg-red-500 hover:bg-red-600"
             >
               <LogOut className="h-4 w-4" /> Logout
@@ -102,16 +73,7 @@ export default function Sidebar({ children }: AppLayoutProps) {
         </aside>
 
         <div className="flex-1 flex flex-col min-h-screen">
-          <header className="h-14 border-b bg-white flex items-center justify-between px-4">
-            <div className="flex items-center gap-2 text-sm text-slate-500">
-              <RoleIcon className="h-4 w-4" />
-              <span>Role: {userRole}</span>
-            </div>
-            <div className="flex items-center gap-2 text-sm text-slate-500">
-              <UserCircle className="h-4 w-4" />
-              <span>{userName}</span>
-            </div>
-          </header>
+          <Navbar />
           <main className="p-6 app-main">{children}</main>
         </div>
       </div>
