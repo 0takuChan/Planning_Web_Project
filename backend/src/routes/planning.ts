@@ -4,9 +4,7 @@ import { PrismaClient, Planning } from "@prisma/client";
 const router = express.Router();
 const prisma = new PrismaClient();
 
-// Interface สำหรับ request body ตอนเพิ่มหรือแก้ไข Planning
 interface CreatePlanningBody {
-  job_id: number;
   job_step_id: number;
   planned_date: string;
   planned_quantity: number;
@@ -16,7 +14,7 @@ interface CreatePlanningBody {
 router.get("/", async (_req: Request, res: Response) => {
   try {
     const plannings: Planning[] = await prisma.planning.findMany({
-      include: { job: true, jobStep: true },
+      include: { jobStep: { include: { job: true, step: true } } },
     });
     res.json(plannings);
   } catch (error: any) {
@@ -31,7 +29,7 @@ router.get("/:id", async (req: Request<{ id: string }>, res: Response) => {
   try {
     const planning = await prisma.planning.findUnique({
       where: { planning_id: parseInt(id, 10) },
-      include: { job: true, jobStep: true },
+      include: { jobStep: { include: { job: true, step: true } } },
     });
 
     if (!planning) {
@@ -45,125 +43,138 @@ router.get("/:id", async (req: Request<{ id: string }>, res: Response) => {
   }
 });
 
-// // เพิ่ม Planning
-// router.post("/", async (req: Request<{}, {}, CreatePlanningBody>, res: Response) => {
-//   const { job_id, job_step_id, planned_date, planned_quantity } = req.body;
+// เพิ่ม Planning
+router.post("/", async (req: Request<{}, {}, CreatePlanningBody>, res: Response) => {
+  const { job_step_id, planned_date, planned_quantity } = req.body;
 
-//   if (!job_id || !job_step_id || !planned_date || planned_quantity === undefined) {
-//     return res.status(400).json({ error: "กรุณากรอกข้อมูลให้ครบทุกช่อง" });
-//   }
+  if (!job_step_id || !planned_date || planned_quantity === undefined) {
+    return res.status(400).json({ error: "กรุณากรอกข้อมูลให้ครบทุกช่อง" });
+  }
 
-//   try {
-//     const job = await prisma.job.findUnique({ where: { job_id } });
-//     if (!job) return res.status(404).json({ error: "ไม่พบงานนี้" });
+  try {
+    //ตรวจสอบว่า job_step_id มีอยู่จริงไหม และดึง job_id มาด้วย
+    const jobStep = await prisma.jobStep.findUnique({
+      where: { job_step_id },
+      include: { job: true },
+    });
 
-//     // ตรวจสอบว่ามี Planning ของ job_id + job_step_id + วันเดียวกัน
-//     const existingSameDay = await prisma.planning.findFirst({
-//       where: { job_id, job_step_id, planned_date: new Date(planned_date) },
-//     });
+    if (!jobStep) return res.status(404).json({ error: "ไม่พบ JobStep นี้" });
 
-//     // รวม planned_quantity ของ job_id + job_step_id ทั้งหมด
-//     const allPlanned = await prisma.planning.aggregate({
-//       where: { job_id, job_step_id },
-//       _sum: { planned_quantity: true },
-//     });
+    const job_id = jobStep.job.job_id; // ดึง job_id จาก relation
 
-//     const currentPlanned = existingSameDay ? existingSameDay.planned_quantity : 0;
-//     const newTotal = (allPlanned._sum.planned_quantity || 0) - currentPlanned + planned_quantity;
+    // ตรวจสอบว่ามี Planning ซ้ำวันไหม
+    const existingSameDay = await prisma.planning.findFirst({
+      where: { job_step_id, planned_date: new Date(planned_date) },
+    });
 
-//     if (newTotal > job.total_quantity) {
-//       return res.status(400).json({
-//         error: `จำนวนสินค้ารวมของหัวข้อนี้ (${newTotal}) เกินจำนวนทั้งหมดของ Job (${job.total_quantity})`,
-//       });
-//     }
+    // รวม planned_quantity ทั้งหมดของ job_step_id
+    const allPlanned = await prisma.planning.aggregate({
+      where: { job_step_id },
+      _sum: { planned_quantity: true },
+    });
 
-//     let planning;
-//     if (existingSameDay) {
-//       // รวม planned_quantity กับวันเดิม
-//       planning = await prisma.planning.update({
-//         where: { planning_id: existingSameDay.planning_id },
-//         data: { planned_quantity: existingSameDay.planned_quantity + planned_quantity },
-//       });
-//     } else {
-//       // สร้างใหม่
-//       planning = await prisma.planning.create({
-//         data: {
-//           job_id,
-//           job_step_id,
-//           planned_date: new Date(planned_date),
-//           planned_quantity,
-//         },
-//       });
-//     }
+    const currentPlanned = existingSameDay ? existingSameDay.planned_quantity : 0;
+    const newTotal = (allPlanned._sum.planned_quantity || 0) - currentPlanned + planned_quantity;
 
-//     res.status(201).json(planning);
-//   } catch (error: any) {
-//     console.error("Error creating planning:", error);
-//     res.status(500).json({ error: "เกิดข้อผิดพลาดในการเพิ่มข้อมูล Planning" });
-//   }
-// });
+    if (newTotal > jobStep.job.total_quantity) {
+      return res.status(400).json({
+        error: `จำนวนสินค้ารวมของขั้นตอนนี้ (${newTotal}) เกินจำนวนทั้งหมดของงาน (${jobStep.job.total_quantity})`,
+      });
+    }
 
-// // แก้ไข Planning
-// router.put("/:id", async (req: Request<{ id: string }, {}, CreatePlanningBody>, res: Response) => {
-//   const { id } = req.params;
-//   const { job_id, job_step_id, planned_date, planned_quantity } = req.body;
+    let planning;
+    if (existingSameDay) {
+      planning = await prisma.planning.update({
+        where: { planning_id: existingSameDay.planning_id },
+        data: {
+          planned_quantity: existingSameDay.planned_quantity + planned_quantity,
+          job_id, // เพิ่ม job_id ให้แน่ใจว่าอัปเดตสัมพันธ์ถูกต้อง
+        },
+      });
+    } else {
+      planning = await prisma.planning.create({
+        data: {
+          job_step_id,
+          job_id, // เพิ่มอัตโนมัติ
+          planned_date: new Date(planned_date),
+          planned_quantity,
+        },
+      });
+    }
 
-//   if (!job_id || !job_step_id || !planned_date || planned_quantity === undefined) {
-//     return res.status(400).json({ error: "กรุณากรอกข้อมูลให้ครบทุกช่อง" });
-//   }
+    res.status(201).json(planning);
+  } catch (error: any) {
+    console.error("Error creating planning:", error);
+    res.status(500).json({ error: "เกิดข้อผิดพลาดในการเพิ่มข้อมูล Planning" });
+  }
+});
 
-//   try {
-//     const existingPlanning = await prisma.planning.findUnique({
-//       where: { planning_id: parseInt(id, 10) },
-//     });
 
-//     if (!existingPlanning) return res.status(404).json({ error: "ไม่พบข้อมูล Planning นี้" });
+// แก้ไข Planning 
+router.put("/:id", async (req: Request<{ id: string }, {}, CreatePlanningBody>, res: Response) => {
+  const { id } = req.params;
+  const { job_step_id, planned_date, planned_quantity } = req.body;
 
-//     const job = await prisma.job.findUnique({ where: { job_id } });
-//     if (!job) return res.status(404).json({ error: "ไม่พบงานนี้" });
+  if (!job_step_id || !planned_date || planned_quantity === undefined) {
+    return res.status(400).json({ error: "กรุณากรอกข้อมูลให้ครบทุกช่อง" });
+  }
 
-//     // รวม planned_quantity ของ job_id + job_step_id (หัวข้อใหม่) ทั้งหมด ยกเว้นตัวเอง
-//     const allPlanned = await prisma.planning.aggregate({
-//       where: {
-//         job_id,
-//         job_step_id,
-//         NOT: { planning_id: existingPlanning.planning_id },
-//       },
-//       _sum: { planned_quantity: true },
-//     });
+  try {
+    const existingPlanning = await prisma.planning.findUnique({
+      where: { planning_id: parseInt(id, 10) },
+    });
+    if (!existingPlanning)
+      return res.status(404).json({ error: "ไม่พบข้อมูล Planning นี้" });
 
-//     const newTotal = (allPlanned._sum.planned_quantity || 0) + planned_quantity;
+    //ดึง job_id ที่สัมพันธ์กับ job_step_id ใหม่
+    const jobStep = await prisma.jobStep.findUnique({
+      where: { job_step_id },
+      include: { job: true },
+    });
+    if (!jobStep) return res.status(404).json({ error: "ไม่พบ JobStep นี้" });
 
-//     if (newTotal > job.total_quantity) {
-//       return res.status(400).json({
-//         error: `จำนวนสินค้ารวมของหัวข้อนี้ (${newTotal}) เกินจำนวนทั้งหมดของ Job (${job.total_quantity})`,
-//       });
-//     }
+    const job_id = jobStep.job.job_id; // ดึง job_id จาก relation
 
-//     // อัปเดตข้อมูล สามารถเปลี่ยน job_step_id และวันที่ได้
-//     const updatedPlanning = await prisma.planning.update({
-//       where: { planning_id: existingPlanning.planning_id },
-//       data: {
-//         job_id,
-//         job_step_id,
-//         planned_date: new Date(planned_date),
-//         planned_quantity,
-//       },
-//     });
+    const allPlanned = await prisma.planning.aggregate({
+      where: {
+        job_step_id,
+        NOT: { planning_id: existingPlanning.planning_id },
+      },
+      _sum: { planned_quantity: true },
+    });
 
-//     res.json(updatedPlanning);
-//   } catch (error: any) {
-//     console.error("Error updating planning:", error);
-//     res.status(500).json({ error: "เกิดข้อผิดพลาดในการแก้ไขข้อมูล Planning" });
-//   }
-// });
+    const newTotal = (allPlanned._sum.planned_quantity || 0) + planned_quantity;
+
+    if (newTotal > jobStep.job.total_quantity) {
+      return res.status(400).json({
+        error: `จำนวนสินค้ารวมของขั้นตอนนี้ (${newTotal}) เกินจำนวนทั้งหมดของงาน (${jobStep.job.total_quantity})`,
+      });
+    }
+
+    //update job_id ทุกครั้งเพื่อให้สัมพันธ์ถูกต้องเสมอ
+    const updatedPlanning = await prisma.planning.update({
+      where: { planning_id: existingPlanning.planning_id },
+      data: {
+        job_step_id,
+        job_id,
+        planned_date: new Date(planned_date),
+        planned_quantity,
+      },
+    });
+
+    res.json(updatedPlanning);
+  } catch (error: any) {
+    console.error("Error updating planning:", error);
+    res.status(500).json({ error: "เกิดข้อผิดพลาดในการแก้ไขข้อมูล Planning" });
+  }
+});
+
 
 // ลบ Planning
 router.delete("/:id", async (req: Request<{ id: string }>, res: Response) => {
   const { id } = req.params;
 
   try {
-    // ตรวจสอบว่ามีอยู่จริงไหม
     const existingPlanning = await prisma.planning.findUnique({
       where: { planning_id: parseInt(id, 10) },
     });
@@ -172,7 +183,6 @@ router.delete("/:id", async (req: Request<{ id: string }>, res: Response) => {
       return res.status(404).json({ error: "ไม่พบข้อมูล Planning นี้" });
     }
 
-    // ลบข้อมูล
     await prisma.planning.delete({
       where: { planning_id: parseInt(id, 10) },
     });

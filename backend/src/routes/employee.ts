@@ -88,6 +88,42 @@ router.put("/:id", async (req: Request, res: Response): Promise<void> => {
   }
 });
 
+// เปลี่ยนรหัสผ่านพนักงาน
+router.put("/:id/change-password", async (req: Request, res: Response): Promise<void> => {
+  const { id } = req.params;
+  const { oldPassword, newPassword } = req.body;
+
+  try {
+    const employee = await prisma.employee.findUnique({
+      where: { employee_id: parseInt(id, 10) },
+    });
+
+    if (!employee) {
+      res.status(404).json({ error: "ไม่พบพนักงานนี้" });
+      return;
+    }
+
+    // ตรวจสอบรหัสผ่านเดิมก่อน
+    const isMatch = await bcrypt.compare(oldPassword, employee.password);
+    if (!isMatch) {
+      res.status(400).json({ error: "รหัสผ่านเดิมไม่ถูกต้อง" });
+      return;
+    }
+
+    const hashedNewPassword = await bcrypt.hash(newPassword, 10);
+
+    await prisma.employee.update({
+      where: { employee_id: parseInt(id, 10) },
+      data: { password: hashedNewPassword },
+    });
+
+    res.json({ message: "เปลี่ยนรหัสผ่านเรียบร้อยแล้ว" });
+  } catch (error) {
+    console.error("Error changing password:", error);
+    res.status(500).json({ error: "ไม่สามารถเปลี่ยนรหัสผ่านได้" });
+  }
+});
+
 // ลบพนักงาน
 router.delete("/:id", async (req: Request, res: Response): Promise<void> => {
   const { id } = req.params;
