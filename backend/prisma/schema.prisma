@@ -76,7 +76,7 @@ model JobStep {
   job_step_id Int     @id @default(autoincrement())
   job_id      Int
   step_id     Int
-  step_option String? @db.VarChar(50)
+
 
   job  Job  @relation(fields: [job_id], references: [job_id])
   step Step @relation(fields: [step_id], references: [step_id])
@@ -105,7 +105,7 @@ model ProductionLog {
   job_id       Int?
   job_step_id  Int
   log_date     DateTime @db.Date
-  dateline_date     DateTime @db.Date 
+  dateline_date DateTime @db.Date 
   quantity     Int
   employee_id  Int
   

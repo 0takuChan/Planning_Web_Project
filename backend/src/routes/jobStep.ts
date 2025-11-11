@@ -8,7 +8,6 @@ const prisma = new PrismaClient();
 interface CreateJobStepBody {
   job_id: number;
   step_id: number;
-  step_option?: string | null;
 }
 
 // ดึง JobStep ทั้งหมด
@@ -44,10 +43,9 @@ router.get("/:id", async (req: Request<{ id: string }>, res: Response) => {
   }
 });
 
-
 // เพิ่ม JobStep
 router.post("/", async (req: Request<{}, {}, CreateJobStepBody>, res: Response) => {
-  const { job_id, step_id, step_option } = req.body;
+  const { job_id, step_id } = req.body;
 
   if (!job_id || !step_id) {
     return res.status(400).json({ error: "job_id และ step_id จำเป็นต้องกรอก" });
@@ -55,7 +53,7 @@ router.post("/", async (req: Request<{}, {}, CreateJobStepBody>, res: Response) 
 
   try {
     const newJobStep: JobStep = await prisma.jobStep.create({
-      data: { job_id, step_id, step_option },
+      data: { job_id, step_id },
     });
     res.status(201).json(newJobStep);
   } catch (error: any) {
@@ -69,10 +67,10 @@ router.post("/", async (req: Request<{}, {}, CreateJobStepBody>, res: Response) 
   }
 });
 
-// แก้ไข JobStep 
+// แก้ไข JobStep
 router.put("/:id", async (req: Request<{ id: string }, {}, CreateJobStepBody>, res: Response) => {
   const { id } = req.params;
-  const { job_id, step_id, step_option } = req.body;
+  const { job_id, step_id } = req.body;
 
   try {
     const existingJobStep = await prisma.jobStep.findUnique({
@@ -88,7 +86,6 @@ router.put("/:id", async (req: Request<{ id: string }, {}, CreateJobStepBody>, r
       data: {
         job_id: job_id ?? existingJobStep.job_id,
         step_id: step_id ?? existingJobStep.step_id,
-        step_option: step_option ?? existingJobStep.step_option,
       },
     });
 
@@ -98,7 +95,6 @@ router.put("/:id", async (req: Request<{ id: string }, {}, CreateJobStepBody>, r
     res.status(500).json({ error: "เกิดข้อผิดพลาดในการแก้ไขข้อมูล JobStep" });
   }
 });
-
 
 // ลบ JobStep
 router.delete("/:id", async (req: Request<{ id: string }>, res: Response) => {
