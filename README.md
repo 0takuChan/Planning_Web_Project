@@ -4,7 +4,7 @@ login
 <img width="1794" height="938" alt="image" src="https://github.com/user-attachments/assets/1c4f088e-54e9-49af-8f41-3e8a515fe089" />
 
 dashborad
-<img width="1794" height="938" alt="image" src="https://github.com/user-attachments/assets/8bf3f4a4-7136-43e6-ac37-cd8c0415d80f" />
+<img width="1794" height="1135" alt="image" src="https://github.com/user-attachments/assets/52d0ae95-a5ad-4bf5-92b7-56a107eb355a" />
 
 planning
 <img width="1794" height="938" alt="image" src="https://github.com/user-attachments/assets/4a4e1c02-159f-4cd5-87e9-fdcb1efd46b3" />
