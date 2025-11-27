@@ -1,0 +1,35 @@
+.step-week-grid{ width:100%; }
+.step-week-grid .swg-cell{ min-height:4rem; border-left:1px solid hsl(var(--border)); padding:.25rem; display:flex; flex-wrap:wrap; gap:.25rem; align-items:flex-start; }
+
+/* Event chip responsive styles for month view */
+.step-week-grid.month-view .event-chip {
+  font-size: 9px;
+  padding: 2px 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+  line-height: 1.2;
+}
+
+.step-week-grid.week-view .event-chip {
+  font-size: 10px;
+  padding: 2px 4px;
+  white-space: nowrap;
+}
+
+/* Adjust cell content layout for month view */
+.step-week-grid.month-view .swg-day-cell {
+  min-height: 50px;
+  padding: 2px;
+  gap: 2px;
+  align-items: flex-start;
+  justify-content: flex-start;
+  flex-direction: column;
+}
+
+.step-week-grid.week-view .swg-day-cell {
+  min-height: 50px;
+  padding: 4px;
+  gap: 4px;
+}

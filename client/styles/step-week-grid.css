@@ -1,2 +1,0 @@
-.step-week-grid{ width:100%; }
-.step-week-grid .swg-cell{ min-height:4rem; border-left:1px solid hsl(var(--border)); padding:.25rem; display:flex; flex-wrap:wrap; gap:.25rem; align-items:flex-start; }
