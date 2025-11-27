@@ -21,6 +21,9 @@ addProduct
 addAdmin
 <img width="1794" height="938" alt="image" src="https://github.com/user-attachments/assets/129a450c-fe59-4cae-8420-cc5919157d23" />
 
+addStep
+<img width="1794" height="938" alt="image" src="https://github.com/user-attachments/assets/26485d0c-1128-4f8c-9dbd-19665d5e321c" />
+
 summary
 <img width="1794" height="938" alt="image" src="https://github.com/user-attachments/assets/b94573ff-d99d-417a-951e-297df0e4c5cd" />
 <img width="1910" height="996" alt="image" src="https://github.com/user-attachments/assets/94009475-f6c6-4da3-87d2-07023505b281" />
