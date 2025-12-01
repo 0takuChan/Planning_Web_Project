@@ -7,8 +7,6 @@
 - **Backend/**: ระบบฝั่งเซิร์ฟเวอร์ (Node.js, TypeScript, Prisma, Express)
 - **Frontend/**: ระบบฝั่งผู้ใช้ (React, TypeScript, Vite, TailwindCSS)
 
-## การติดตั้ง
-
 ### Backend
 
 1. ติดตั้ง dependencies:
@@ -48,24 +46,7 @@
 - **Backend**: Node.js, Express, TypeScript, Prisma, Docker
 - **Frontend**: React, Vite, TailwindCSS
 
-## โครงสร้างโฟลเดอร์
 
-```
-Backend/
-  ├── src/
-  ├── prisma/
-  └── ...
-Frontend/
-  ├── client/
-  ├── hooks/
-  ├── lib/
-  └── ...
-```
+Interface
 
-## Contributors
 
-- [0takuChan](https://github.com/0takuChan)
-
----
-
-> สร้างโดยทีมงานสำหรับการวางแผนและจัดการงานผลิต
