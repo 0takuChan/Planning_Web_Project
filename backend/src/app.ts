@@ -10,12 +10,13 @@ import stepRoutes from "./routes/step";
 import planningRoutes from "./routes/planning";
 import customerRoutes from "./routes/customer";
 import productionLogRoutes from "./routes/productionLog";
+import shipmentRouter  from "./routes/shipment";
 
 dotenv.config();
 
 const app = express();
 app.use(cors({
-  origin: "http://localhost:8080", // frontend port
+  origin: "http://localhost:8082", // frontend port
   credentials: true,
 }));
 app.use(express.json());
@@ -31,5 +32,6 @@ app.use("/api/plannings", planningRoutes);
 app.use("/api/productionlogs", productionLogRoutes);
 app.use("/api/roles", roleRoutes);
 app.use("/api/steps", stepRoutes);
+app.use("/api/shipment",shipmentRouter)
 
 export default app;

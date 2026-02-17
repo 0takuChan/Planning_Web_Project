@@ -36,6 +36,34 @@ async function main(): Promise<void> {
       create: step,
     });
   }
+// --- Shipment Status ---
+const shipmentStatuses = [
+  { status_name: 'เตรียมส่ง' },
+  { status_name: 'กำลังจัดส่ง' },
+  { status_name: 'ส่งแล้ว' },
+];
+
+for (const status of shipmentStatuses) {
+  await prisma.shipmentStatus.upsert({
+    where: { status_name: status.status_name },
+    update: {},
+    create: status,
+  });
+}
+// --- Transport Type ---
+const transportTypes = [
+  { transport_name: 'รถ' },
+  { transport_name: 'เรือ' },
+  { transport_name: 'เครื่องบิน' },
+];
+
+for (const type of transportTypes) {
+  await prisma.transportType.upsert({
+    where: { transport_name: type.transport_name },
+    update: {},
+    create: type,
+  });
+}
 
   // --- Admin ---
   const adminRole = await prisma.role.findUnique({

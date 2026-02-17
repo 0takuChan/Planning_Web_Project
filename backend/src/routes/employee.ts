@@ -5,7 +5,11 @@ import bcrypt from "bcrypt";
 const router = express.Router();
 const prisma = new PrismaClient();
 
+<<<<<<< Updated upstream:backend/src/routes/employee.ts
 // ดึงพนักงานทั้งหมด
+=======
+//ดึงพนักงานทั้งหมด
+>>>>>>> Stashed changes:Backend/src/routes/employee.ts
 router.get("/", async (req: Request, res: Response): Promise<void> => {
   try {
     const employees = await prisma.employee.findMany({
@@ -37,7 +41,11 @@ router.get("/:id", async (req: Request, res: Response): Promise<void> => {
   }
 });
 
+<<<<<<< Updated upstream:backend/src/routes/employee.ts
 // เพิ่มพนักงาน
+=======
+//เพิ่มพนักงาน
+>>>>>>> Stashed changes:Backend/src/routes/employee.ts
 router.post("/", async (req: Request, res: Response): Promise<void> => {
   try {
     const { fullname, username, password, email, phone, role_id } = req.body;
@@ -88,6 +96,7 @@ router.put("/:id", async (req: Request, res: Response): Promise<void> => {
   }
 });
 
+<<<<<<< Updated upstream:backend/src/routes/employee.ts
 // เปลี่ยนรหัสผ่านพนักงาน
 router.put("/:id/change-password", async (req: Request, res: Response): Promise<void> => {
   const { id } = req.params;
@@ -124,6 +133,8 @@ router.put("/:id/change-password", async (req: Request, res: Response): Promise<
   }
 });
 
+=======
+>>>>>>> Stashed changes:Backend/src/routes/employee.ts
 // ลบพนักงาน
 router.delete("/:id", async (req: Request, res: Response): Promise<void> => {
   const { id } = req.params;
