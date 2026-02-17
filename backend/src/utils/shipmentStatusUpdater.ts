@@ -1,26 +1,16 @@
-import { PrismaClient } from "@prisma/client";
-
-const prisma = new PrismaClient();
-
-export const updateShipmentStatusAutomatically = async () => {
+export const calculateShipmentStatus = (
+  departure_date: Date,
+  arrival_date: Date
+) => {
   const today = new Date();
 
-  const shipments = await prisma.shipment.findMany();
-
-  for (const s of shipments) {
-    let newStatus = 1;
-
-    if (today >= s.arrival_date) {
-      newStatus = 3;
-    } else if (today >= s.departure_date) {
-      newStatus = 2;
-    }
-
-    if (newStatus !== s.status_id) {
-      await prisma.shipment.update({
-        where: { shipment_id: s.shipment_id },
-        data: { status_id: newStatus },
-      });
-    }
+  if (today < departure_date) {
+    return 1; // เตรียมส่ง
   }
+
+  if (today >= departure_date && today < arrival_date) {
+    return 2; // กำลังจัดส่ง
+  }
+
+  return 3; // ส่งแล้ว
 };

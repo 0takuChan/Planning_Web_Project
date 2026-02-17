@@ -1,5 +1,7 @@
 import express, { Request, Response } from "express";
 import { PrismaClient, Shipment } from "@prisma/client";
+import { calculateShipmentStatus } from "../utils/shipmentStatusUpdater";
+
 
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -7,20 +9,21 @@ const prisma = new PrismaClient();
 
 // ================== GET ALL ==================
 router.get("/", async (_req: Request, res: Response) => {
-  try {
-    const shipments: Shipment[] = await prisma.shipment.findMany({
-      include: {
-        transportType: true,
-        status: true,
-        shipmentItems: true,
-      },
-    });
+  const shipments = await prisma.shipment.findMany({
+    include: {
+      transportType: true,
+    },
+  });
 
-    res.json(shipments);
-  } catch (error: any) {
-    console.error("Error fetching Shipment:", error);
-    res.status(500).json({ error: "เกิดข้อผิดพลาดในการดึงข้อมูล Shipment" });
-  }
+  const result = shipments.map((s) => ({
+    ...s,
+    calculated_status: calculateShipmentStatus(
+      s.departure_date,
+      s.arrival_date
+    ),
+  }));
+
+  res.json(result);
 });
 
 

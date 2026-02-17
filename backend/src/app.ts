@@ -12,6 +12,7 @@ import customerRoutes from "./routes/customer";
 import productionLogRoutes from "./routes/productionLog";
 import shipmentRouter  from "./routes/shipment";
 
+
 dotenv.config();
 
 const app = express();
