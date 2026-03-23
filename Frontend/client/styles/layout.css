@@ -1,3 +1,18 @@
-.app-main { padding: 24px; }
+.app-main { 
+  padding: 24px;
+  animation: fadeInUp 0.3s ease-out;
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 .aside-nav { width: 256px; }
 .header-bar { height: 56px; }

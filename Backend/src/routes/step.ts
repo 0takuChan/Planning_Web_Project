@@ -7,6 +7,7 @@ const prisma = new PrismaClient();
 // Interface สำหรับ request body ตอนเพิ่ม/แก้ไข Step
 interface CreateStepBody {
   step_name: string;
+    standard_time: number;
 }
 
 //ดึง Step ทั้งหมด
@@ -42,15 +43,16 @@ router.get("/:id", async (req: Request<{ id: string }>, res: Response) => {
 
 // เพิ่ม Step
 router.post("/", async (req: Request<{}, {}, CreateStepBody>, res: Response) => {
-  const { step_name } = req.body;
+  const { step_name, standard_time } = req.body;
 
-  if (!step_name) {
-    return res.status(400).json({ error: "กรุณากรอกชื่อ Step" });
-  }
-
+  if (!step_name || !standard_time) {
+  return res.status(400).json({ 
+    error: "กรุณากรอกชื่อ Step และกำลังการผลิตสูงสุดต่อวัน" 
+  });
+}
   try {
     const newStep: Step = await prisma.step.create({
-      data: { step_name },
+      data: { step_name,standard_time },
     });
     res.status(201).json(newStep);
   } catch (error: any) {
@@ -65,11 +67,13 @@ router.post("/", async (req: Request<{}, {}, CreateStepBody>, res: Response) => 
 // แก้ไข Step
 router.put("/:id", async (req: Request<{ id: string }, {}, CreateStepBody>, res: Response) => {
   const { id } = req.params;
-  const { step_name } = req.body;
+  const { step_name, standard_time  } = req.body;
 
-  if (!step_name) {
-    return res.status(400).json({ error: "กรุณากรอกชื่อ Step" });
-  }
+  if (!step_name || !standard_time) {
+  return res.status(400).json({ 
+    error: "กรุณากรอกชื่อ Step และกำลังการผลิตสูงสุดต่อวัน" 
+  });
+}
 
   try {
     const existingStep = await prisma.step.findUnique({
@@ -82,7 +86,7 @@ router.put("/:id", async (req: Request<{ id: string }, {}, CreateStepBody>, res:
 
     const updatedStep = await prisma.step.update({
       where: { step_id: parseInt(id, 10) },
-      data: { step_name },
+      data: { step_name ,standard_time},
     });
 
     res.json(updatedStep);

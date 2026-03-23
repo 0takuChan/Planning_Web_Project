@@ -26,15 +26,17 @@ import {
   SelectItem,
   SelectValue,
 } from "@/components/ui/select";
-import { Calendar, Trash2, AlertTriangle, CheckCircle, XCircle } from "lucide-react";
+import { Calendar, Trash2, AlertTriangle, CheckCircle, XCircle, List, ArrowUpDown, Search } from "lucide-react";
 import * as Popover from "@radix-ui/react-popover";
 import { usePermissions } from "@/App";
 import { toast } from "@/hooks/use-toast";
+import NewItemBadge from "@/components/common/NewItemBadge";
 
 // Interface สำหรับข้อมูล Step จาก API
 interface Step {
   step_id: number;
   step_name: string;
+  standard_time: number;
 }
 
 // Interface สำหรับข้อมูล Job ที่ใช้ใน Frontend
@@ -44,7 +46,9 @@ interface JobRow {
   job: string;
   quantity: number;
   date: string;
+  createdAt?: string;
   selectedSteps: number[]; // เปลี่ยนจาก boolean fields เป็น array ของ step_id
+  stepMinutesById: Record<number, string>;
   fabric: string;
   customer_id?: number;
   employee_id?: number;
@@ -139,6 +143,7 @@ export default function Jobs() {
     quantity: 0,
     date: "",
     selectedSteps: [],
+    stepMinutesById: {},
     fabric: "",
   });
   
@@ -149,6 +154,7 @@ export default function Jobs() {
     quantity: 0,
     date: "",
     selectedSteps: [],
+    stepMinutesById: {},
     fabric: "",
   });
   
@@ -156,6 +162,8 @@ export default function Jobs() {
     key: "customer",
     dir: 1,
   });
+  const [searchQuery, setSearchQuery] = useState("");
+  const [compactList, setCompactList] = useState(false);
 
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
 
@@ -214,6 +222,10 @@ export default function Jobs() {
           // หา JobSteps ที่เป็นของ job นี้
           const relatedJobSteps = jobStepsData.filter((js: any) => js.job_id === job.job_id);
           const selectedSteps = relatedJobSteps.map((js: any) => js.step_id);
+          const stepMinutesById = relatedJobSteps.reduce((acc: Record<number, string>, js: any) => {
+            acc[js.step_id] = js.minutes_per_unit != null ? String(js.minutes_per_unit) : "";
+            return acc;
+          }, {});
           
           return {
             id: job.job_id,
@@ -221,7 +233,9 @@ export default function Jobs() {
             job: job.job_number,
             quantity: job.total_quantity || 0,
             date: job.end_date ? formatDateDMY(job.end_date.split('T')[0]) : "",
+            createdAt: job.created_date || "",
             selectedSteps: selectedSteps,
+            stepMinutesById,
             fabric: job.type_of_fabric || "",
             customer_id: job.customer_id,
             employee_id: job.employee_id,
@@ -274,27 +288,53 @@ export default function Jobs() {
     fetchStepUsages();
   }, [editIndex, editDraft.selectedSteps, jobs]);
 
+  const filteredJobs = useMemo(() => {
+    const normalizedQuery = searchQuery.trim().toLowerCase();
+
+    if (!normalizedQuery) {
+      return jobs;
+    }
+
+    return jobs.filter((job) => {
+      const stepNames = job.selectedSteps
+        .map((stepId) => steps.find((step) => step.step_id === stepId)?.step_name)
+        .filter(Boolean)
+        .join(" ");
+
+      const values = [
+        job.customer,
+        job.job,
+        job.quantity,
+        job.date,
+        job.fabric,
+        stepNames,
+      ]
+        .filter(Boolean)
+        .map((value) => String(value).toLowerCase());
+
+      return values.some((value) => value.includes(normalizedQuery));
+    });
+  }, [jobs, searchQuery, steps]);
+
   const sorted = useMemo(
     () =>
-      jobs
+      filteredJobs
         .slice()
         .sort((a, b) => {
           const aVal = a[sort.key];
           const bVal = b[sort.key];
-          
-          // Handle different data types
+
           if (typeof aVal === 'string' && typeof bVal === 'string') {
             return aVal.localeCompare(bVal) * sort.dir;
           }
-          
+
           if (typeof aVal === 'number' && typeof bVal === 'number') {
             return (aVal - bVal) * sort.dir;
           }
-          
-          // Fallback
+
           return (aVal > bVal ? 1 : -1) * sort.dir;
         }),
-    [jobs, sort]
+    [filteredJobs, sort]
   );
 
   const th = (k: keyof JobRow, label: string) => (
@@ -370,6 +410,7 @@ export default function Jobs() {
           body: JSON.stringify({
             job_id: newJob.job_id,
             step_id: stepId,
+            minutes_per_unit: Number(draft.stepMinutesById[stepId]),
           }),
         })
       );
@@ -390,7 +431,9 @@ export default function Jobs() {
         job: newJob.job_number,
         quantity: newJob.total_quantity,
         date: formatDateDMY(newJob.end_date),
+        createdAt: newJob.created_date,
         selectedSteps: draft.selectedSteps,
+        stepMinutesById: draft.stepMinutesById,
         fabric: newJob.type_of_fabric,
         customer_id: newJob.customer_id,
         employee_id: newJob.employee_id,
@@ -405,6 +448,7 @@ export default function Jobs() {
         quantity: 0,
         date: "",
         selectedSteps: [],
+        stepMinutesById: {},
         fabric: "",
       });
       setOpen(false);
@@ -512,6 +556,7 @@ export default function Jobs() {
                 body: JSON.stringify({
                   job_id: jobId,
                   step_id: stepId,
+                  minutes_per_unit: Number(editDraft.stepMinutesById[stepId]),
                 }),
               })
             )
@@ -535,6 +580,7 @@ export default function Jobs() {
         quantity: 0,
         date: "",
         selectedSteps: [],
+        stepMinutesById: {},
         fabric: "",
       });
       setStepUsages({});
@@ -652,6 +698,7 @@ export default function Jobs() {
       original.quantity !== editDraft.quantity ||
       original.date !== editDraft.date ||
       JSON.stringify(original.selectedSteps.sort()) !== JSON.stringify(editDraft.selectedSteps.sort()) ||
+      JSON.stringify(original.stepMinutesById) !== JSON.stringify(editDraft.stepMinutesById) ||
       original.fabric !== editDraft.fabric
     );
   })();
@@ -706,16 +753,51 @@ export default function Jobs() {
         ...prev,
         selectedSteps: isRemoving
           ? prev.selectedSteps.filter(id => id !== stepId)
-          : [...prev.selectedSteps, stepId]
+          : [...prev.selectedSteps, stepId],
+        stepMinutesById: isRemoving
+          ? Object.fromEntries(Object.entries(prev.stepMinutesById).filter(([key]) => Number(key) !== stepId))
+          : {
+              ...prev.stepMinutesById,
+              [stepId]: prev.stepMinutesById[stepId] || "",
+            }
       }));
     } else {
       setDraft(prev => ({
         ...prev,
         selectedSteps: prev.selectedSteps.includes(stepId)
           ? prev.selectedSteps.filter(id => id !== stepId)
-          : [...prev.selectedSteps, stepId]
+          : [...prev.selectedSteps, stepId],
+        stepMinutesById: prev.selectedSteps.includes(stepId)
+          ? Object.fromEntries(Object.entries(prev.stepMinutesById).filter(([key]) => Number(key) !== stepId))
+          : {
+              ...prev.stepMinutesById,
+              [stepId]: prev.stepMinutesById[stepId] || "",
+            }
       }));
     }
+  };
+
+  const handleStepMinutesChange = (stepId: number, value: string, isEdit: boolean = false) => {
+    const normalizedValue = value === "" ? "" : String(Math.max(0, Number(value)));
+
+    if (isEdit) {
+      setEditDraft((prev) => ({
+        ...prev,
+        stepMinutesById: {
+          ...prev.stepMinutesById,
+          [stepId]: normalizedValue,
+        },
+      }));
+      return;
+    }
+
+    setDraft((prev) => ({
+      ...prev,
+      stepMinutesById: {
+        ...prev.stepMinutesById,
+        [stepId]: normalizedValue,
+      },
+    }));
   };
 
   // Helper function เพื่อตรวจสอบว่า step มี production logs หรือไม่
@@ -736,7 +818,8 @@ export default function Jobs() {
     draft.fabric.trim() !== "" &&
     customers.some(c => c.fullname === draft.customer || c.name === draft.customer) &&
     currentEmployeeId !== null &&
-    draft.selectedSteps.length > 0;
+    draft.selectedSteps.length > 0 &&
+    draft.selectedSteps.every((stepId) => Number(draft.stepMinutesById[stepId]) > 0);
 
   // เพิ่มฟังก์ชันสำหรับ get วันที่ปัจจุบันในรูปแบบ yyyy-mm-dd
   const getTodayDate = () => {
@@ -891,15 +974,38 @@ export default function Jobs() {
                         {steps.map((step) => (
                           <label
                             key={step.step_id}
-                            className="flex items-center justify-between rounded border px-3 py-2 hover:bg-gray-50 cursor-pointer"
+                            className="block rounded border px-3 py-2 hover:bg-gray-50"
                           >
-                            <span className="capitalize">{step.step_name}</span>
-                            <input
-                              type="checkbox"
-                              checked={draft.selectedSteps.includes(step.step_id)}
-                              onChange={() => toggleStepSelection(step.step_id, false)}
-                              className="rounded"
-                            />
+                            <div className="flex items-center justify-between gap-3 cursor-pointer">
+                              <div>
+                                <div className="capitalize font-medium">{step.step_name}</div>
+                                <div className="text-xs text-slate-500">
+                                  เวลาปฏิบัติงานสูงสุด/วัน: {step.standard_time.toLocaleString()} นาที
+                                </div>
+                              </div>
+                              <input
+                                type="checkbox"
+                                checked={draft.selectedSteps.includes(step.step_id)}
+                                onChange={() => toggleStepSelection(step.step_id, false)}
+                                className="rounded"
+                              />
+                            </div>
+                            {draft.selectedSteps.includes(step.step_id) && (
+                              <div className="mt-3">
+                                <label className="text-xs text-slate-500 font-medium">
+                                  เวลาต่อชิ้นของ step นี้ (นาที)
+                                </label>
+                                <input
+                                  className="mt-1 w-full border rounded px-3 py-2 bg-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                                  type="number"
+                                  min="1"
+                                  step="1"
+                                  value={draft.stepMinutesById[step.step_id] || ""}
+                                  onChange={(e) => handleStepMinutesChange(step.step_id, e.target.value, false)}
+                                  placeholder="เช่น 15"
+                                />
+                              </div>
+                            )}
                           </label>
                         ))}
                       </div>
@@ -913,6 +1019,40 @@ export default function Jobs() {
                 </div>
               </DialogContent>
             </Dialog>
+          </div>
+          <div className="mt-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div className="relative w-full md:max-w-sm">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+              <input
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="ค้นหา customer, job, fabric, step หรือ due date"
+                className="w-full rounded-lg border border-slate-200 py-2 pl-9 pr-3 text-sm text-slate-700 shadow-sm transition focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[hsl(var(--brand-start))]"
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant={compactList ? "default" : "outline"}
+                onClick={() => setCompactList((current) => !current)}
+              >
+                <List className="mr-2 h-4 w-4" />
+                {compactList ? "Detailed List" : "List"}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() =>
+                  setSort((current) => ({
+                    key: "date",
+                    dir: current.key === "date" && current.dir === 1 ? -1 : 1,
+                  }))
+                }
+              >
+                <ArrowUpDown className="mr-2 h-4 w-4" />
+                Sort List {sort.key === "date" && sort.dir === 1 ? "Oldest" : "Newest"}
+              </Button>
+            </div>
           </div>
           <div className="mt-4 overflow-x-auto">
             <table className="min-w-[800px] w-full text-sm">
@@ -937,11 +1077,16 @@ export default function Jobs() {
                 ) : (
                   sorted.map((r, i) => (
                     <tr key={r.id || i} className="border-t hover:bg-gray-50">
-                      <td className="py-3 px-2 font-medium text-slate-700">{r.customer}</td>
-                      <td className="py-3 px-2 font-mono text-sm">{r.job}</td>
-                      <td className="py-3 px-2">{r.quantity}</td>
-                      <td className="py-3 px-2">{r.date}</td>
-                      <td className="py-3 px-2">
+                      <td className={compactList ? "py-2 px-2 font-medium text-slate-700" : "py-3 px-2 font-medium text-slate-700"}>{r.customer}</td>
+                      <td className={compactList ? "py-2 px-2 font-mono text-sm" : "py-3 px-2 font-mono text-sm"}>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span>{r.job}</span>
+                          <NewItemBadge dateValue={r.createdAt} />
+                        </div>
+                      </td>
+                      <td className={compactList ? "py-2 px-2" : "py-3 px-2"}>{r.quantity}</td>
+                      <td className={compactList ? "py-2 px-2" : "py-3 px-2"}>{r.date}</td>
+                      <td className={compactList ? "py-2 px-2" : "py-3 px-2"}>
                         <div className="flex flex-wrap gap-1">
                           {r.selectedSteps.length > 0 ? (
                             r.selectedSteps.map(stepId => {
@@ -960,8 +1105,8 @@ export default function Jobs() {
                           )}
                         </div>
                       </td>
-                      <td className="py-3 px-2 capitalize">{r.fabric}</td>
-                      <td className="py-3 px-2 text-right">
+                      <td className={compactList ? "py-2 px-2 capitalize" : "py-3 px-2 capitalize"}>{r.fabric}</td>
+                      <td className={compactList ? "py-2 px-2 text-right" : "py-3 px-2 text-right"}>
                         <Button
                           size="sm"
                           variant="outline"
@@ -1142,35 +1287,58 @@ export default function Jobs() {
                     return (
                       <div
                         key={step.step_id}
-                        className={`flex items-center justify-between rounded border px-3 py-2 ${
+                        className={`rounded border px-3 py-2 ${
                           isLocked ? 'bg-red-50 border-red-200' : 'hover:bg-gray-50'
                         }`}
                       >
-                        <div className="flex items-center gap-2">
-                          <span className="capitalize">{step.step_name}</span>
-                          {isSelected && hasLogs && (
-                            <div className="flex items-center gap-1">
-                              <AlertTriangle className="h-3 w-3 text-amber-500" />
-                              <span className="text-xs text-amber-600">Has production logs</span>
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="capitalize font-medium">{step.step_name}</span>
+                              {isSelected && hasLogs && (
+                                <div className="flex items-center gap-1">
+                                  <AlertTriangle className="h-3 w-3 text-amber-500" />
+                                  <span className="text-xs text-amber-600">Has production logs</span>
+                                </div>
+                              )}
                             </div>
-                          )}
+                            <div className="text-xs text-slate-500 mt-1">
+                              เวลาปฏิบัติงานสูงสุด/วัน: {step.standard_time.toLocaleString()} นาที
+                            </div>
                         </div>
-                        <div className="flex items-center gap-2">
-                          {isSelected && hasLogs && (
-                            <XCircle className="h-4 w-4 text-red-500" />
-                          )}
-                          {isSelected && !hasLogs && (
-                            <CheckCircle className="h-4 w-4 text-green-500" />
-                          )}
-                          <input
-                            type="checkbox"
-                            checked={isSelected}
-                            onChange={() => toggleStepSelection(step.step_id, true)}
-                            className="rounded"
-                            disabled={isLocked && isSelected}
-                            title={isLocked && isSelected ? "Cannot remove step with production logs" : ""}
-                          />
+                          <div className="flex items-center gap-2">
+                            {isSelected && hasLogs && (
+                              <XCircle className="h-4 w-4 text-red-500" />
+                            )}
+                            {isSelected && !hasLogs && (
+                              <CheckCircle className="h-4 w-4 text-green-500" />
+                            )}
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={() => toggleStepSelection(step.step_id, true)}
+                              className="rounded"
+                              disabled={isLocked && isSelected}
+                              title={isLocked && isSelected ? "Cannot remove step with production logs" : ""}
+                            />
+                          </div>
                         </div>
+                        {isSelected && (
+                          <div className="mt-3">
+                            <label className="text-xs text-slate-500 font-medium">
+                              เวลาต่อชิ้นของ step นี้ (นาที)
+                            </label>
+                            <input
+                              className="mt-1 w-full border rounded px-3 py-2 bg-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                              type="number"
+                              min="1"
+                              step="1"
+                              value={editDraft.stepMinutesById[step.step_id] || ""}
+                              onChange={(e) => handleStepMinutesChange(step.step_id, e.target.value, true)}
+                              placeholder="เช่น 15"
+                            />
+                          </div>
+                        )}
                       </div>
                     );
                   })}

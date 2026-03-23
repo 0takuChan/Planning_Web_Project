@@ -58,12 +58,19 @@
   position: relative;
   overflow: hidden;
   height: 400px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 .calendar-grid-scroll {
   overflow: auto;
   height: 400px;
   max-width: 100%; /* เพิ่มบรรทัดนี้เพื่อบังคับ scroll */
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
   scrollbar-width: thin;
   scrollbar-color: #cbd5e1 #f1f5f9;
 }
@@ -94,6 +101,9 @@
 /* Updated calendar grid content for consistent cell sizes */
 .calendar-grid-content {
   min-width: 100%;
+  width: max-content;
+  max-width: none;
+  box-sizing: border-box;
 }
 
 /* Month view - container with narrower cells */
@@ -344,6 +354,8 @@
     0 10px 10px -5px rgba(0, 0, 0, 0.04);
   z-index: 60;
   overflow: hidden;
+  max-width: 100%;
+  box-sizing: border-box;
   animation: slideInPopup 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
@@ -371,6 +383,7 @@
 .job-detail-popup-scroll {
   height: 100%;
   overflow-y: auto;
+  overflow-x: hidden;
   scrollbar-width: thin;
   scrollbar-color: #cbd5e1 #f1f5f9;
 }
@@ -468,6 +481,7 @@
 
 .job-detail-content {
   padding: 1.5rem;
+  overflow-x: hidden;
 }
 
 .job-info-grid {
@@ -475,6 +489,7 @@
   grid-template-columns: 1fr 1fr;
   gap: 1rem;
   margin-bottom: 1.5rem;
+  min-width: 0;
 }
 
 .job-info-item {
@@ -670,6 +685,38 @@
   transform: translateY(0);
 }
 
+.job-detail-auto-plan-btn {
+  background: linear-gradient(135deg, #7c3aed, #a855f7);
+  color: white;
+  border: none;
+  border-radius: 0.75rem;
+  padding: 0.875rem 1.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 4px 6px -1px rgba(124, 58, 237, 0.2);
+  font-size: 0.875rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.job-detail-auto-plan-btn:hover:not(:disabled) {
+  background: linear-gradient(135deg, #a855f7, #d946ef);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 8px -1px rgba(124, 58, 237, 0.3);
+}
+
+.job-detail-auto-plan-btn:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.job-detail-auto-plan-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: linear-gradient(135deg, #a1a1aa, #d4d4d8);
+}
+
 /* Popup Overlays - แยกสำหรับ delete popup เท่านั้น */
 .popup-overlay-light {
   position: fixed;
@@ -695,9 +742,10 @@
   border-radius: 1rem;
   border: 2px solid #e2e8f0;
   background: white;
-  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.05),
+    0 25px 50px -12px rgba(0, 0, 0, 0.25);
   width: 18rem;
-  ring: 1px solid rgba(0, 0, 0, 0.05);
   overflow: hidden;
 }
 

@@ -1,10 +1,12 @@
 import "@/styles/planning.css";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { parseISO, startOfMonth, addMonths, getDaysInMonth, addDays, format } from "date-fns";
 import StepWeekGrid, { StepEvent } from "../components/planning/StepWeekGrid";
 import AppLayout from "@/components/layout/Sidebar";
 import { Button } from "@/components/ui/button";
 import { usePermissions } from "@/App";
+import { List, ArrowUpDown, Search, Sparkles } from "lucide-react";
+import NewItemBadge from "@/components/common/NewItemBadge";
 
 interface Job {
   job_id: number;
@@ -51,6 +53,7 @@ interface JobItem {
   quantity: number;
   due: string;
   customer_name: string;
+  createdAt?: string;
 }
 
 const stepColorPalette: Record<string, string> = {
@@ -93,6 +96,14 @@ export default function Planning() {
   }>(null);
   const [hiddenJobs, setHiddenJobs] = useState<Set<string>>(new Set());
   const [showCompletedJobs, setShowCompletedJobs] = useState<boolean>(true);
+  const [jobSearchQuery, setJobSearchQuery] = useState<string>('');
+  const [jobSortDescending, setJobSortDescending] = useState<boolean>(true);
+  const [planningSearchQuery, setPlanningSearchQuery] = useState<string>('');
+  const [planningCompactList, setPlanningCompactList] = useState<boolean>(false);
+  const [planningSortDescending, setPlanningSortDescending] = useState<boolean>(true);
+  const [isAutoPlanLoading, setIsAutoPlanLoading] = useState<boolean>(false);
+  const [autoPlanProcessedCount, setAutoPlanProcessedCount] = useState<number>(0);
+  const [autoPlanTotalCount, setAutoPlanTotalCount] = useState<number>(0);
 
   // Data from API
   const [jobs, setJobs] = useState<JobItem[]>([]);
@@ -133,6 +144,7 @@ export default function Planning() {
           quantity: job.total_quantity,
           due: new Date(job.end_date).toISOString().split('T')[0],
           customer_name: job.customer.fullname,
+          createdAt: (job as any).created_date,
         }));
 
         // Transform steps data with colors
@@ -178,6 +190,8 @@ export default function Planning() {
 
     fetchData();
   }, []);
+
+
 
   // Get steps for a specific job based on JobStep
   const getJobSteps = (jobId: number) => {
@@ -284,6 +298,52 @@ export default function Planning() {
       return used >= job.quantity;
     });
   };
+
+  const filteredJobsList = useMemo(() => {
+    let filtered = jobs.filter(
+      (j) => showCompletedJobs || !isJobComplete(j.id)
+    );
+
+    if (jobSearchQuery) {
+      const query = jobSearchQuery.toLowerCase();
+      filtered = filtered.filter(
+        (j) =>
+          j.id.toLowerCase().includes(query) ||
+          j.customer_name.toLowerCase().includes(query) ||
+          j.quantity.toString().includes(query)
+      );
+    }
+
+    filtered.sort((a, b) => {
+      const dateA = new Date(a.due).getTime();
+      const dateB = new Date(b.due).getTime();
+      return jobSortDescending ? dateB - dateA : dateA - dateB;
+    });
+
+    return filtered;
+  }, [jobs, showCompletedJobs, jobSearchQuery, jobSortDescending]);
+
+  const filteredPlanningsList = useMemo(() => {
+    let filtered = plannings.filter(rec => rec.jobStep?.job && rec.jobStep?.step);
+
+    if (planningSearchQuery) {
+      const query = planningSearchQuery.toLowerCase();
+      filtered = filtered.filter(
+        (rec) =>
+          rec.jobStep?.job?.job_number.toLowerCase().includes(query) ||
+          rec.jobStep?.step?.step_name.toLowerCase().includes(query) ||
+          rec.planned_quantity.toString().includes(query)
+      );
+    }
+
+    filtered.sort((a, b) => {
+      const dateA = new Date(a.planned_date).getTime();
+      const dateB = new Date(b.planned_date).getTime();
+      return planningSortDescending ? dateB - dateA : dateA - dateB;
+    });
+
+    return filtered;
+  }, [plannings, planningSearchQuery, planningSortDescending]);
 
   const askQuantity = (
     info: { step: string; day: number; jobId: string; date: string },
@@ -537,6 +597,94 @@ export default function Planning() {
     }
   };
 
+  const handleAutoPlanAll = async () => {
+    if (!filteredJobsList.length) {
+      alert('ไม่มี Job ที่สามารถสร้างแผนการได้');
+      return;
+    }
+
+    const incompleteJobs = filteredJobsList.filter(job => !isJobComplete(job.id));
+    if (!incompleteJobs.length) {
+      alert('ทั้งหมด Job เสร็จแล้ว');
+      return;
+    }
+
+    try {
+      setIsAutoPlanLoading(true);
+      setAutoPlanTotalCount(incompleteJobs.length);
+      setAutoPlanProcessedCount(0);
+      
+      const response = await fetch(`${API_BASE_URL}/plannings/auto-plan-batch`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          job_ids: incompleteJobs.map((job) => job.job_id),
+        }),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        let errorMessage = result.message || 'เกิดข้อผิดพลาดในการใช้ Auto Plan All';
+        if (Array.isArray(result.failedJobs) && result.failedJobs.length > 0) {
+          errorMessage += `\n\n${result.failedJobs.join('\n')}`;
+        }
+        alert(errorMessage);
+        return;
+      }
+
+      setAutoPlanProcessedCount(incompleteJobs.length);
+
+      const totalCreated = result.count || 0;
+      const successCount = result.jobCount || 0;
+      const failedJobs = Array.isArray(result.failedJobs) ? result.failedJobs : [];
+
+      // Refresh planning data
+      const planningsRes = await fetch(`${API_BASE_URL}/plannings`);
+      const planningsData: Planning[] = await planningsRes.json();
+      setPlannings(planningsData);
+      
+      // Update events
+      const transformedEvents: StepEvent[] = planningsData
+        .filter(planning => planning.jobStep?.job && planning.jobStep?.step)
+        .map(planning => {
+          const plannedDate = new Date(planning.planned_date);
+          const monthStart = startOfMonth(currentDate);
+          const dayDiff = Math.floor((plannedDate.getTime() - monthStart.getTime()) / (1000 * 60 * 60 * 24));
+          
+          return {
+            id: `planning-${planning.planning_id}`,
+            planning_id: planning.planning_id,
+            step: planning.jobStep!.step!.step_name,
+            day: dayDiff + 1,
+            jobId: planning.jobStep!.job!.job_number,
+            qty: planning.planned_quantity,
+            color: stepColorPalette[planning.jobStep!.step!.step_name] || "#9ca3af",
+            date: new Date(planning.planned_date).toISOString().split('T')[0],
+            job_step_id: planning.job_step_id,
+          };
+        });
+      
+      setEvents(transformedEvents);
+      setSelected(null);
+
+      let message = `✅ สำเร็จ: ${successCount}/${incompleteJobs.length} Jobs สร้างแผนการแล้ว (${totalCreated} Planning Records)`;
+      if (failedJobs.length > 0) {
+        message += `\n\n❌ ไม่สำเร็จ:\n${failedJobs.join('\n')}`;
+      }
+      alert(message);
+    } catch (error) {
+      console.error('Error calling auto-plan:', error);
+      alert('เกิดข้อผิดพลาดในการใช้ Auto Plan All');
+    } finally {
+      setIsAutoPlanLoading(false);
+      setAutoPlanProcessedCount(0);
+      setAutoPlanTotalCount(0);
+    }
+  };
+
   if (loading) {
     return (
       <AppLayout>
@@ -549,7 +697,7 @@ export default function Planning() {
 
   return (
     <AppLayout>
-      <div className="space-y-4 relative">
+      <div className="relative min-w-0 max-w-full space-y-4">
         {(selected || deletePopup) && (
           <div className="fixed inset-0 bg-black/30 z-20 pointer-events-none" />
         )}
@@ -562,17 +710,16 @@ export default function Planning() {
           <h1 className="text-2xl font-bold">Planning</h1>
         </div>
         
-        <div className="grid grid-cols-1 xl:grid-cols-4 gap-6">
-          <div className="xl:col-span-3 rounded-lg border bg-white p-4 relative z-30">
-            <div className="mb-3 font-semibold flex items-center justify-between">
+        <div className="relative z-30 min-w-0 max-w-full overflow-hidden rounded-lg border bg-white p-4">
+            <div className="mb-3 flex flex-col gap-3 font-semibold lg:flex-row lg:items-center lg:justify-between">
               <div>
                 {viewMode === 'month' 
                   ? `${format(startDate, "MMMM yyyy")} (${daysToShow} days)`
                   : `${format(startDate, "MMMM yyyy")} - Week ${currentWeekPage + 1}/${totalWeekPages} (Days ${weekStartDay}-${weekStartDay + daysToShow - 1})`
                 }
               </div>
-              <div className="flex items-center gap-3">
-                <div className="flex items-center bg-slate-100 rounded-lg p-1">
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="flex items-center rounded-lg bg-slate-100 p-1">
                   <button
                     className={`px-3 py-1 text-xs rounded-md transition-colors ${
                       viewMode === 'week'
@@ -633,7 +780,7 @@ export default function Planning() {
               💡 <strong>Tips:</strong> Drag steps from job list to schedule them, or drag existing scheduled items to move them to different days/steps
             </div>
             
-            <div className="relative">
+            <div className="relative min-w-0 max-w-full overflow-x-auto">
               <StepWeekGrid
                 startDate={addDays(startDate, weekStartDay - 1)}
                 steps={steps}
@@ -653,168 +800,6 @@ export default function Planning() {
                 }
               />
             </div>
-          </div>
-          
-          <div className="rounded-lg border bg-white p-4 relative">
-            <div className="flex items-center justify-between mb-3">
-              <div className="font-semibold">Job list</div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => setShowCompletedJobs(!showCompletedJobs)}
-                  className={`px-2 py-1 text-xs rounded-md transition-colors ${
-                    showCompletedJobs
-                      ? 'bg-slate-200 text-slate-700'
-                      : 'bg-emerald-100 text-emerald-700'
-                  }`}
-                  title={showCompletedJobs ? 'Showing all jobs' : 'Hiding completed jobs'}
-                >
-                  {showCompletedJobs ? '👁️ All' : '⏳ Incomplete'}
-                </button>
-              </div>
-            </div>
-            <div className="space-y-2">
-              {jobs
-                .filter((j) => showCompletedJobs || !isJobComplete(j.id))
-                .map((job) => {
-                  const jobStepsForJob = getJobSteps(job.job_id);
-                  const jobComplete = isJobComplete(job.id);
-                  
-                  return (
-                    <div key={job.id}>
-                      <button
-                        onClick={() => setSelected(job)}
-                        className={`w-full rounded-lg border px-3 py-2 text-left hover:bg-slate-50 relative z-30 ${
-                          jobComplete ? 'bg-emerald-50 border-emerald-200' : ''
-                        }`}
-                      >
-                        <div className="flex items-center justify-between">
-                          <div className="font-medium">{job.id}</div>
-                          {jobComplete && <span className="text-emerald-600 text-xs">✓ Complete</span>}
-                        </div>
-                        <div className="text-xs text-slate-500">
-                          {job.quantity} pcs • {job.customer_name}
-                        </div>
-                        <div className="text-xs text-slate-400">
-                          Due {job.due}
-                        </div>
-                      </button>
-                      {selected?.id === job.id && (
-                        <div className="job-detail-popup">
-                          <div className="job-detail-popup-scroll">
-                            <div className="job-detail-header">
-                              <div className="job-detail-header-content">
-                                <div className="job-detail-title-wrapper">
-                                  <div className="job-detail-icon">
-                                    {job.id.substring(0, 2)}
-                                  </div>
-                                  <div>
-                                    <div className="job-detail-title">{job.id}</div>
-                                    <div className="job-detail-subtitle">
-                                      {job.customer_name}
-                                    </div>
-                                  </div>
-                                </div>
-                                <button
-                                  className="job-detail-close"
-                                  onClick={() => setSelected(null)}
-                                  aria-label="Close"
-                                >
-                                  ×
-                                </button>
-                              </div>
-                            </div>
-
-                            <div className="job-detail-content">
-                              <div className="job-info-grid">
-                                <div className="job-info-item">
-                                  <div className="job-info-label">📋 Job ID</div>
-                                  <div className="job-info-value">{job.id}</div>
-                                </div>
-                                <div className="job-info-item">
-                                  <div className="job-info-label">📦 Quantity</div>
-                                  <div className="job-info-value">
-                                    {calcRemaining(job.id)} / {job.quantity}
-                                  </div>
-                                </div>
-                                <div className="job-info-item job-info-full">
-                                  <div className="job-info-label">📅 Due Date</div>
-                                  <div className="job-info-value">{job.due}</div>
-                                </div>
-                                <div className="job-info-item job-info-full">
-                                  <div className="job-info-label">👤 Customer</div>
-                                  <div className="job-info-value">{job.customer_name}</div>
-                                </div>
-                              </div>
-
-                              <div className="job-steps-section">
-                                <div className="job-steps-header">
-                                  <div className="job-steps-title">Steps</div>
-                                  <div className="job-steps-badge">
-                                    Drag to schedule
-                                  </div>
-                                </div>
-                                
-                                <div className="job-steps-grid">
-                                  {jobStepsForJob
-                                    .filter((s) => calcRemainingStep(job.id, s.key) > 0)
-                                    .map((s) => (
-                                      <div
-                                        key={s.job_step_id}
-                                        draggable
-                                        onDragStart={(e) => {
-                                          e.dataTransfer.setData("text/step", s.key);
-                                          e.dataTransfer.setData("text/job", job.id);
-                                        }}
-                                        className="job-step-item"
-                                        style={{ backgroundColor: s.color }}
-                                      >
-                                        <div className="job-step-name">{s.key}</div>
-                                        <div className="job-step-remaining">
-                                          {calcRemainingStep(job.id, s.key)} remaining
-                                        </div>
-                                      </div>
-                                    ))}
-                                  {jobStepsForJob.length === 0 && (
-                                    <div className="job-steps-complete">
-                                      <div className="job-steps-complete-icon">⚠️</div>
-                                      <div className="job-steps-complete-text">
-                                        No steps configured for this job
-                                      </div>
-                                    </div>
-                                  )}
-                                  {jobStepsForJob.length > 0 && jobStepsForJob.every((s) => calcRemainingStep(job.id, s.key) === 0) && (
-                                    <div className="job-steps-complete">
-                                      <div className="job-steps-complete-icon">✅</div>
-                                      <div className="job-steps-complete-text">
-                                        All steps completed!
-                                      </div>
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-
-                              <div className="job-detail-actions">
-                                <button
-                                  className="job-detail-done-btn"
-                                  onClick={() => {
-                                    if (isJobComplete(job.id)) {
-                                      setHiddenJobs((prev) => new Set(prev).add(job.id));
-                                    }
-                                    setSelected(null);
-                                  }}
-                                >
-                                  {isJobComplete(job.id) ? 'Done' : 'Close'}
-                                </button>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-            </div>
-          </div>
         </div>
         
         {qtyPopup && (
@@ -927,40 +912,326 @@ export default function Planning() {
           </div>
         )}
 
-        <div className="mt-8 rounded-lg border bg-white p-4">
-          <div className="font-semibold mb-2">Planning Records</div>
-          <table className="w-full text-sm border">
-            <thead>
-              <tr className="bg-slate-100">
-                <th className="px-2 py-1 border">Job ID</th>
-                <th className="px-2 py-1 border">Step</th>
-                <th className="px-2 py-1 border">Date</th>
-                <th className="px-2 py-1 border">Quantity</th>
-              </tr>
-            </thead>
-            <tbody>
-              {plannings
-                .filter(rec => rec.jobStep?.job && rec.jobStep?.step) // Filter valid records
-                .map((rec) => (
-                  <tr key={rec.planning_id}>
-                    <td className="px-2 py-1 border">{rec.jobStep!.job!.job_number}</td>
-                    <td className="px-2 py-1 border">{rec.jobStep!.step!.step_name}</td>
-                    <td className="px-2 py-1 border">
-                      {new Date(rec.planned_date).toLocaleDateString('th-TH')}
-                    </td>
-                    <td className="px-2 py-1 border">{rec.planned_quantity}</td>
-                  </tr>
-                ))}
-              {plannings.filter(rec => rec.jobStep?.job && rec.jobStep?.step).length === 0 && (
-                <tr>
-                  <td colSpan={4} className="text-center text-slate-400 py-2">
-                    No planning records yet.
-                  </td>
-                </tr>
+        <div className="mt-8 grid min-w-0 max-w-full grid-cols-1 gap-6 xl:grid-cols-4">
+          <div className="relative min-w-0 max-w-full overflow-hidden rounded-lg border bg-white p-4">
+            <div className="mb-3 flex items-center justify-between">
+              <div className="font-semibold">Job list</div>
+            </div>
+            <div className="mb-3 flex flex-wrap items-center gap-2">
+              <div className="relative flex-1 min-w-[200px]">
+                <Search className="absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="ค้นหา job, customer, จำนวน"
+                  value={jobSearchQuery}
+                  onChange={(e) => setJobSearchQuery(e.target.value)}
+                  className="w-full border rounded-lg py-2 pl-8 pr-3 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--brand-end))]/20"
+                />
+              </div>
+              <button
+                onClick={() => setJobSortDescending(!jobSortDescending)}
+                className="flex items-center gap-1 px-3 py-2 rounded-lg border hover:bg-slate-50 transition-colors"
+                title="Sort by due date"
+              >
+                <ArrowUpDown className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="max-h-[32rem] min-h-[482px] space-y-2 overflow-y-auto overflow-x-hidden pr-1">
+              {filteredJobsList
+                .slice(0, 5)
+                .map((job) => {
+                  const jobStepsForJob = getJobSteps(job.job_id);
+                  const jobComplete = isJobComplete(job.id);
+
+                  return (
+                    <div key={job.id}>
+                      <button
+                        onClick={() => setSelected(job)}
+                        className={`w-full rounded-lg border px-3 py-3 text-left hover:bg-slate-50 relative z-30 ${
+                          jobComplete ? 'bg-emerald-50 border-emerald-200' : ''
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <div className="min-w-0 truncate font-medium">{job.id}</div>
+                            {job.createdAt && <NewItemBadge dateValue={job.createdAt} />}
+                          </div>
+                          {jobComplete && <span className="text-emerald-600 text-xs">✓ Complete</span>}
+                        </div>
+                        <div className="truncate text-xs text-slate-500">
+                          {job.quantity} pcs • {job.customer_name}
+                        </div>
+                        <div className="truncate text-xs text-slate-400">
+                          Due {job.due}
+                        </div>
+                      </button>
+                      {selected?.id === job.id && (
+                        <div className="job-detail-popup">
+                          <div className="job-detail-popup-scroll">
+                            <div className="job-detail-header">
+                              <div className="job-detail-header-content">
+                                <div className="job-detail-title-wrapper">
+                                  <div className="job-detail-icon">
+                                    {job.id.substring(0, 2)}
+                                  </div>
+                                  <div>
+                                    <div className="job-detail-title">{job.id}</div>
+                                    <div className="job-detail-subtitle">
+                                      {job.customer_name}
+                                    </div>
+                                  </div>
+                                </div>
+                                <button
+                                  className="job-detail-close"
+                                  onClick={() => setSelected(null)}
+                                  aria-label="Close"
+                                >
+                                  ×
+                                </button>
+                              </div>
+                            </div>
+
+                            <div className="job-detail-content">
+                              <div className="job-info-grid">
+                                <div className="job-info-item">
+                                  <div className="job-info-label">📋 Job ID</div>
+                                  <div className="job-info-value">{job.id}</div>
+                                </div>
+                                <div className="job-info-item">
+                                  <div className="job-info-label">📦 Quantity</div>
+                                  <div className="job-info-value">
+                                    {calcRemaining(job.id)} / {job.quantity}
+                                  </div>
+                                </div>
+                                <div className="job-info-item job-info-full">
+                                  <div className="job-info-label">📅 Due Date</div>
+                                  <div className="job-info-value">{job.due}</div>
+                                </div>
+                                <div className="job-info-item job-info-full">
+                                  <div className="job-info-label">👤 Customer</div>
+                                  <div className="job-info-value">{job.customer_name}</div>
+                                </div>
+                              </div>
+
+                              <div className="job-steps-section">
+                                <div className="job-steps-header">
+                                  <div className="job-steps-title">Steps</div>
+                                  <div className="job-steps-badge">
+                                    Drag to schedule
+                                  </div>
+                                </div>
+
+                                <div className="job-steps-grid">
+                                  {jobStepsForJob
+                                    .filter((s) => calcRemainingStep(job.id, s.key) > 0)
+                                    .map((s) => (
+                                      <div
+                                        key={s.job_step_id}
+                                        draggable
+                                        onDragStart={(e) => {
+                                          e.dataTransfer.setData("text/step", s.key);
+                                          e.dataTransfer.setData("text/job", job.id);
+                                        }}
+                                        className="job-step-item"
+                                        style={{ backgroundColor: s.color }}
+                                      >
+                                        <div className="job-step-name">{s.key}</div>
+                                        <div className="job-step-remaining">
+                                          {calcRemainingStep(job.id, s.key)} remaining
+                                        </div>
+                                      </div>
+                                    ))}
+                                  {jobStepsForJob.length === 0 && (
+                                    <div className="job-steps-complete">
+                                      <div className="job-steps-complete-icon">⚠️</div>
+                                      <div className="job-steps-complete-text">
+                                        No steps configured for this job
+                                      </div>
+                                    </div>
+                                  )}
+                                  {jobStepsForJob.length > 0 && jobStepsForJob.every((s) => calcRemainingStep(job.id, s.key) === 0) && (
+                                    <div className="job-steps-complete">
+                                      <div className="job-steps-complete-icon">✅</div>
+                                      <div className="job-steps-complete-text">
+                                        All steps completed!
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+
+                              <div className="job-detail-actions">
+                                <button
+                                  className="job-detail-done-btn"
+                                  onClick={() => {
+                                    if (isJobComplete(job.id)) {
+                                      setHiddenJobs((prev) => new Set(prev).add(job.id));
+                                    }
+                                    setSelected(null);
+                                  }}
+                                >
+                                  {isJobComplete(job.id) ? 'Done' : 'Close'}
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              {filteredJobsList.length > 5 && (
+                <div className="text-xs text-slate-500 text-center py-2 px-3 bg-slate-50 rounded-lg">
+                  ...showing 5 of {filteredJobsList.length} jobs (use search to filter)
+                </div>
               )}
-            </tbody>
-          </table>
+            </div>
+          </div>
+
+          <div className="xl:col-span-3 min-w-0 max-w-full overflow-hidden rounded-lg border bg-white p-4">
+            <div className="mb-3 flex items-center justify-between">
+              <div className="font-semibold">Planning Records</div>
+              <button
+                onClick={handleAutoPlanAll}
+                disabled={!canEditPage || filteredJobsList.every(j => isJobComplete(j.id)) || isAutoPlanLoading}
+                className="flex items-center gap-2 px-3 py-2 rounded-lg bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 text-white text-sm font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Generate auto plans for all incomplete jobs"
+              >
+                <Sparkles className={`h-4 w-4 ${isAutoPlanLoading ? 'animate-spin' : ''}`} />
+                {isAutoPlanLoading ? `Planning ${autoPlanTotalCount} jobs...` : 'Auto Plan All'}
+              </button>
+            </div>
+            <div className="mb-3 flex flex-wrap items-center gap-2">
+              <div className="relative flex-1 min-w-[200px]">
+                <Search className="absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="ค้นหา job, step, จำนวน"
+                  value={planningSearchQuery}
+                  onChange={(e) => setPlanningSearchQuery(e.target.value)}
+                  className="w-full border rounded-lg py-2 pl-8 pr-3 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--brand-end))]/20"
+                />
+              </div>
+              <button
+                onClick={() => setPlanningCompactList(!planningCompactList)}
+                className="flex items-center gap-1 px-3 py-2 rounded-lg border hover:bg-slate-50 transition-colors"
+                title={planningCompactList ? 'Expanded list' : 'Compact list'}
+              >
+                <List className="h-4 w-4" />
+              </button>
+              <button
+                onClick={() => setPlanningSortDescending(!planningSortDescending)}
+                className="flex items-center gap-1 px-3 py-2 rounded-lg border hover:bg-slate-50 transition-colors"
+                title="Sort by date"
+              >
+                <ArrowUpDown className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="max-w-full min-h-[550px] overflow-x-auto">
+              <table className="min-w-[520px] w-full text-sm border">
+                <thead>
+                  <tr className="bg-slate-100">
+                    <th className="px-2 py-1 border">Job ID</th>
+                    <th className="px-2 py-1 border">Step</th>
+                    <th className="px-2 py-1 border">Date</th>
+                    <th className="px-2 py-1 border">Quantity</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {plannings
+                    .filter(rec => rec.jobStep?.job && rec.jobStep?.step)
+                    .slice(0, 5)
+                    .map((rec) => (
+                      <tr key={rec.planning_id}>
+                        <td className="px-2 py-1 border">{rec.jobStep!.job!.job_number}</td>
+                        <td className="px-2 py-1 border">{rec.jobStep!.step!.step_name}</td>
+                        <td className="px-2 py-1 border">
+                          {new Date(rec.planned_date).toLocaleDateString('th-TH')}
+                        </td>
+                        <td className="px-2 py-1 border">{rec.planned_quantity}</td>
+                      </tr>
+                    ))}
+                  {filteredPlanningsList.length === 0 && (
+                    <tr>
+                      <td colSpan={4} className="text-center text-slate-400 py-2">
+                        No planning records found.
+                      </td>
+                    </tr>
+                  )}
+                  {filteredPlanningsList.length > 5 && (
+                    <tr>
+                      <td colSpan={4} className="text-center text-slate-500 text-xs py-2 bg-slate-50">
+                        ...showing 5 of {filteredPlanningsList.length} records (use search to filter)
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
+
+        {/* Loading Modal */}
+        {isAutoPlanLoading && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40 backdrop-blur-sm">
+            <div className="bg-white rounded-2xl shadow-2xl p-8 max-w-sm w-full mx-4">
+              {/* Spinner */}
+              <div className="flex justify-center mb-6">
+                <div className="relative w-16 h-16">
+                  <div className="absolute inset-0 rounded-full border-4 border-slate-200"></div>
+                  <div 
+                    className="absolute inset-0 rounded-full border-4 border-transparent border-t-violet-600 border-r-violet-600 animate-spin"
+                    style={{ animation: 'spin 1s linear infinite' }}
+                  ></div>
+                </div>
+              </div>
+
+              {/* Text Content */}
+              <div className="text-center space-y-3">
+                <h3 className="text-lg font-semibold text-slate-900">
+                  Processing Plans...
+                </h3>
+                <p className="text-sm text-slate-600">
+                  Generating optimal production schedule
+                </p>
+
+                {/* Progress Counter */}
+                <div className="pt-2">
+                  <p className="text-2xl font-bold text-violet-600">
+                    {autoPlanTotalCount}
+                  </p>
+                  <p className="text-xs text-slate-500 mt-1">
+                    Jobs in one AI request
+                  </p>
+                </div>
+
+                {/* Helper Text */}
+                <p className="text-xs text-slate-500 pt-2 leading-relaxed">
+                  AI is calculating all selected jobs in one request. Please don't close this window.
+                </p>
+              </div>
+
+              {/* Progress Bar */}
+              <div className="mt-6 w-full bg-slate-200 rounded-full h-2 overflow-hidden">
+                <div 
+                  className="bg-gradient-to-r from-violet-600 to-purple-600 h-full w-full rounded-full animate-pulse"
+                ></div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Spin Animation Keyframes */}
+        <style>{`
+          @keyframes spin {
+            from {
+              transform: rotate(0deg);
+            }
+            to {
+              transform: rotate(360deg);
+            }
+          }
+        `}</style>
       </div>
     </AppLayout>
   );

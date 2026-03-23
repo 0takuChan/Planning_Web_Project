@@ -116,6 +116,7 @@ export default function StepWeekGrid({
     <div
       ref={containerRef}
       className={cn("w-full step-week-grid calendar-grid-container", `${viewMode}-view`)}
+      style={{ maxWidth: '1750px' }}
     >
       <div className="calendar-grid-scroll">
         <div className={cn("calendar-grid-content", viewMode === 'month' ? "month-view" : "week-view")}>

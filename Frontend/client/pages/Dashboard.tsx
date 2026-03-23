@@ -2,7 +2,9 @@ import { useMemo, useState, useEffect, useRef } from "react";
 import AppLayout from "@/components/layout/Sidebar";
 import CalendarMonth, {
   CalendarEvent,
+  CalendarHighlightRange,
 } from "@/components/calendar/CalendarMonth";
+import MonthlyBarChart from "@/components/charts/MonthlyBarChart";
 import {
   format,
   parseISO,
@@ -62,6 +64,35 @@ interface Employee {
   employee_id: number;
   fullname: string;
   username: string;
+}
+
+interface ShipmentStatus {
+  status_id: number;
+  status_name: string;
+}
+
+interface ShipmentItem {
+  shipment_item_id: number;
+  shipment_id: number;
+  job_step_id: number;
+  quantity: number;
+}
+
+interface Shipment {
+  shipment_id: number;
+  shipment_numbar: string;
+  customer_id: number;
+  status_id: number;
+  departure_date: string;
+  arrival_date: string;
+  total_quantity?: number;
+  status?: ShipmentStatus;
+  customer?: Customer;
+  job?: {
+    job_id: number;
+    job_number: string;
+  };
+  shipmentItems?: ShipmentItem[];
 }
 
 // API Job interface จาก backend
@@ -300,11 +331,15 @@ const statusStyles: Record<
 export default function Dashboard() {
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [month, setMonth] = useState<Date>(new Date());
+  const [shipmentMonth, setShipmentMonth] = useState<Date>(new Date());
+  const [graphYear, setGraphYear] = useState<number>(new Date().getFullYear());
   const [statusFilter, setStatusFilter] = useState<JobRow["state"] | "All">("All");
   const [jobs, setJobs] = useState<JobRow[]>([]);
+  const [apiJobs, setApiJobs] = useState<APIJob[]>([]);
   const [steps, setSteps] = useState<Step[]>([]);
   const [jobSteps, setJobSteps] = useState<JobStep[]>([]);
   const [productionLogs, setProductionLogs] = useState<ProductionLog[]>([]);
+  const [shipments, setShipments] = useState<Shipment[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedJobId, setSelectedJobId] = useState<number | null>(null);
@@ -322,11 +357,12 @@ export default function Dashboard() {
         console.log("Fetching data from APIs...");
         
         // Fetch all data in parallel
-        const [jobsResponse, stepsResponse, jobStepsResponse, productionLogsResponse] = await Promise.all([
+        const [jobsResponse, stepsResponse, jobStepsResponse, productionLogsResponse, shipmentsResponse] = await Promise.all([
           fetch("http://localhost:4000/api/jobs"),
           fetch("http://localhost:4000/api/steps"),
           fetch("http://localhost:4000/api/jobsteps"),
-          fetch("http://localhost:4000/api/productionlogs")
+          fetch("http://localhost:4000/api/productionlogs"),
+          fetch("http://localhost:4000/api/shipments")
         ]);
 
         // Check responses
@@ -342,23 +378,30 @@ export default function Dashboard() {
         if (!productionLogsResponse.ok) {
           throw new Error(`ProductionLogs API error: ${productionLogsResponse.status} ${productionLogsResponse.statusText}`);
         }
+        if (!shipmentsResponse.ok) {
+          throw new Error(`Shipments API error: ${shipmentsResponse.status} ${shipmentsResponse.statusText}`);
+        }
         
-        const [apiJobs, apiSteps, apiJobSteps, apiProductionLogs]: [APIJob[], Step[], JobStep[], ProductionLog[]] = await Promise.all([
+        const [apiJobs, apiSteps, apiJobSteps, apiProductionLogs, apiShipments]: [APIJob[], Step[], JobStep[], ProductionLog[], Shipment[]] = await Promise.all([
           jobsResponse.json(),
           stepsResponse.json(),
           jobStepsResponse.json(),
-          productionLogsResponse.json()
+          productionLogsResponse.json(),
+          shipmentsResponse.json()
         ]);
 
         console.log("API Response - Jobs:", apiJobs.length, "items");
         console.log("API Response - Steps:", apiSteps.length, "items");
         console.log("API Response - JobSteps:", apiJobSteps.length, "items");
         console.log("API Response - ProductionLogs:", apiProductionLogs.length, "items");
+        console.log("API Response - Shipments:", apiShipments.length, "items");
         
         // Set steps, jobSteps และ productionLogs first
         setSteps(apiSteps);
         setJobSteps(apiJobSteps);
         setProductionLogs(apiProductionLogs);
+        setShipments(apiShipments);
+        setApiJobs(apiJobs);
         
         // Map jobs with steps data และ production progress
         const mappedJobs = apiJobs.map(job => apiJobToJobRow(job, apiSteps, apiJobSteps, apiProductionLogs));
@@ -416,6 +459,100 @@ export default function Dashboard() {
     return validEvents;
   }, [jobs]);
 
+  const shipmentEvents: CalendarEvent[] = useMemo(() => {
+    const validEvents = shipments
+      .map((s) => {
+        const departureDate = safeParseDateISO(s.departure_date);
+        const arrivalDate = safeParseDateISO(s.arrival_date);
+        
+        // สร้าง events สำหรับ departure (สีม่วง) และ arrival (สีเขียว)
+        const eventsList: CalendarEvent[] = [];
+        
+        if (departureDate && isSameMonth(departureDate, shipmentMonth)) {
+          eventsList.push({
+            id: `dep-${s.shipment_id}`,
+            date: departureDate,
+            label: `DEP: ${s.shipment_id}`,
+            color: "#8b5cf6", // purple for departure
+          });
+        }
+        
+        if (arrivalDate && isSameMonth(arrivalDate, shipmentMonth)) {
+          eventsList.push({
+            id: `arr-${s.shipment_id}`,
+            date: arrivalDate,
+            label: `ARR: ${s.shipment_id}`,
+            color: "#06b6d4", // cyan for arrival
+          });
+        }
+        
+        return eventsList;
+      })
+      .flat()
+      .filter((event): event is CalendarEvent => event !== null);
+
+    return validEvents;
+  }, [shipments, shipmentMonth]);
+
+  const shipmentRanges: CalendarHighlightRange[] = useMemo(() => {
+    return shipments.reduce<CalendarHighlightRange[]>((ranges, shipment) => {
+      const departureDate = safeParseDateISO(shipment.departure_date);
+      const arrivalDate = safeParseDateISO(shipment.arrival_date);
+
+      if (!departureDate || !arrivalDate) return ranges;
+
+      const start = departureDate <= arrivalDate ? departureDate : arrivalDate;
+      const end = departureDate <= arrivalDate ? arrivalDate : departureDate;
+
+      ranges.push({
+        id: `ship-${shipment.shipment_id}`,
+        start,
+        end,
+        color: "#bae6fd",
+      });
+
+      return ranges;
+    }, []);
+  }, [shipments]);
+
+  const completedShipmentsByMonth = useMemo(() => {
+    const counts = Array.from({ length: 12 }, () => 0);
+    shipments.forEach((shipment) => {
+      const statusName = shipment.status?.status_name?.toLowerCase() || "";
+      const isCompleted =
+        statusName.includes("ส่งแล้ว") ||
+        statusName.includes("delivered") ||
+        statusName.includes("completed");
+
+      if (!isCompleted) return;
+
+      const arrivalDate = safeParseDateISO(shipment.arrival_date);
+      if (!arrivalDate || arrivalDate.getFullYear() !== graphYear) return;
+
+      counts[arrivalDate.getMonth()] += 1;
+    });
+    return counts;
+  }, [shipments, graphYear]);
+
+  const totalQuantityByMonth = useMemo(() => {
+    const totals = Array.from({ length: 12 }, () => 0);
+    shipments.forEach((shipment) => {
+      const statusName = shipment.status?.status_name?.toLowerCase() || "";
+      const isCompleted =
+        statusName.includes("ส่งแล้ว") ||
+        statusName.includes("delivered") ||
+        statusName.includes("completed");
+
+      if (!isCompleted) return;
+
+      const arrivalDate = safeParseDateISO(shipment.arrival_date);
+      if (!arrivalDate || arrivalDate.getFullYear() !== graphYear) return;
+
+      totals[arrivalDate.getMonth()] += shipment.total_quantity || 0;
+    });
+    return totals;
+  }, [shipments, graphYear]);
+
   const rows = jobs.filter((j) => {
     const dateMatch = selectedDate && j.end_date
       ? (() => {
@@ -471,6 +608,18 @@ export default function Dashboard() {
     
     return groups;
   }, [month.getTime(), jobs]);
+
+  const jobStepNameById = useMemo(() => {
+    return new Map(jobSteps.map((jobStep) => [jobStep.job_step_id, jobStep.step.step_name]));
+  }, [jobSteps]);
+
+  const shipmentList = useMemo(() => {
+    return [...shipments].sort((a, b) => {
+      const aDate = safeParseDateISO(a.departure_date)?.getTime() ?? 0;
+      const bDate = safeParseDateISO(b.departure_date)?.getTime() ?? 0;
+      return bDate - aDate;
+    });
+  }, [shipments]);
 
   // เพิ่ม useEffect สำหรับ auto-scroll
   useEffect(() => {
@@ -685,7 +834,10 @@ export default function Dashboard() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+
+        
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+          {/* LEFT: Job Calendar */}
           <div className="rounded-lg border bg-white p-4 w-full">
             <div className="flex items-center justify-between mb-2">
               <button
@@ -698,7 +850,7 @@ export default function Dashboard() {
               >
                 {"<"}
               </button>
-              <h3 className="font-semibold">{format(month, "MMMM yyyy")}</h3>
+              <h3 className="font-semibold text-sm">Job Timeline</h3>
               <button
                 className="px-2 py-1 rounded border hover:bg-gray-50"
                 onClick={() =>
@@ -710,15 +862,17 @@ export default function Dashboard() {
                 {">"}
               </button>
             </div>
+            <p className="text-xs text-slate-500 mb-2">{format(month, "MMMM yyyy")}</p>
             <CalendarMonth
               month={month}
               events={events}
               onDayClick={(d) => setSelectedDate(d)}
             />
           </div>
-          
-          <div className="xl:col-span-2 rounded-lg border bg-white p-4 overflow-auto">
-            <div className="flex items-center justify-between">
+
+          {/* RIGHT: Work Table */}
+          <div className="rounded-lg border bg-white p-4 overflow-auto">
+            <div className="flex items-center justify-between mb-4">
               <h3 className="font-semibold">Work Table</h3>
               <div className="flex gap-2">
                 {selectedDate && (
@@ -737,7 +891,7 @@ export default function Dashboard() {
                 </Button>
               </div>
             </div>
-            <div className="mt-3 overflow-x-auto">
+            <div className="mt-3 overflow-x-auto max-h-[600px] overflow-y-auto">
               <table className="min-w-[900px] w-full text-sm">
                 <thead>
                   <tr className="text-left text-slate-500">
@@ -800,8 +954,137 @@ export default function Dashboard() {
                   )}
                 </tbody>
               </table>
+              </div>
             </div>
           </div>
+
+        {/* BOTTOM: Shipment Calendar + In-transit Shipments */}
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+          {/* LEFT: Shipment Calendar */}
+          <div className="rounded-lg border bg-white p-4">
+            <div className="flex items-center justify-between mb-2">
+              <button
+                className="px-2 py-1 rounded border hover:bg-gray-50"
+                onClick={() =>
+                  setShipmentMonth(
+                    (m) => new Date(m.getFullYear(), m.getMonth() - 1, 1),
+                  )
+                }
+              >
+                {"<"}
+              </button>
+              <h3 className="font-semibold text-sm">Shipment Calendar</h3>
+              <button
+                className="px-2 py-1 rounded border hover:bg-gray-50"
+                onClick={() =>
+                  setShipmentMonth(
+                    (m) => new Date(m.getFullYear(), m.getMonth() + 1, 1),
+                  )
+                }
+              >
+                {">"}
+              </button>
+            </div>
+            <p className="text-xs text-slate-500 mb-2">
+              <span className="inline-block w-3 h-3 bg-purple-500 rounded mr-1"></span>
+              Departure &nbsp;
+              <span className="inline-block w-3 h-3 bg-cyan-500 rounded mr-1"></span>
+              Arrival
+            </p>
+            <p className="text-xs text-slate-500 mb-2">{format(shipmentMonth, "MMMM yyyy")}</p>
+            <CalendarMonth
+              month={shipmentMonth}
+              events={shipmentEvents}
+              highlightRanges={shipmentRanges}
+              onDayClick={() => {}}
+            />
+          </div>
+
+          {/* RIGHT: Shipment List */}
+          <div className="rounded-lg border bg-white p-4">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="font-semibold text-sm">รายการจัดส่ง</h3>
+              <span className="text-xs text-slate-500">{shipmentList.length} รายการ</span>
+            </div>
+            {shipmentList.length === 0 ? (
+              <p className="text-sm text-slate-400">ยังไม่มีรายการจัดส่ง</p>
+            ) : (
+              <div className="space-y-3 max-h-[600px] overflow-y-auto">
+                {shipmentList.map((shipment) => {
+                  return (
+                    <div key={shipment.shipment_id} className="border rounded-lg p-3">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-sm font-medium">
+                            {shipment.shipment_numbar}
+                          </p>
+                          <p className="text-xs text-slate-500">
+                            {shipment.customer?.fullname || "-"}
+                          </p>
+                        </div>
+                        <div className="text-right">
+                          <span className="text-xs text-slate-400 block">
+                            {shipment.shipment_id}
+                          </span>
+                          <span className="inline-flex items-center rounded-full bg-blue-50 text-blue-700 px-2 py-0.5 text-xs font-medium">
+                            {shipment.status?.status_name || "ไม่ระบุ"}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="mt-2 space-y-1 text-xs text-slate-600">
+                        {(shipment.shipmentItems || []).map((item) => (
+                          <div key={item.shipment_item_id} className="flex items-center justify-between">
+                            <span>{jobStepNameById.get(item.job_step_id) || `STEP-${item.job_step_id}`}</span>
+                            <span>{item.quantity} ชิ้น</span>
+                          </div>
+                        ))}
+                        {(shipment.shipmentItems || []).length === 0 && (
+                          <div className="text-slate-400">{shipment.job?.job_number || "-"}</div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+        <div className="rounded-lg border bg-white px-4 py-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-sm font-semibold text-slate-700">Graph</div>
+              <div className="text-xs text-slate-500">
+                Monthly completed shipments and total job quantity
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                className="px-2 py-1 rounded border hover:bg-gray-50 text-sm"
+                onClick={() => setGraphYear(graphYear - 1)}
+              >
+                {"<"}
+              </button>
+              <span className="text-sm font-medium text-slate-700 min-w-[60px] text-center">
+                {graphYear}
+              </span>
+              <button
+                className="px-2 py-1 rounded border hover:bg-gray-50 text-sm"
+                onClick={() => setGraphYear(graphYear + 1)}
+              >
+                {">"}
+              </button>
+            </div>
+          </div>
+        </div>
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+          <MonthlyBarChart
+            title="Completed Shipments"
+            data={completedShipmentsByMonth}
+          />
+          <MonthlyBarChart
+            title="Total Job Quantity"
+            data={totalQuantityByMonth}
+          />
         </div>
       </div>
     </AppLayout>

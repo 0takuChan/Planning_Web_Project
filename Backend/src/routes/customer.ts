@@ -23,6 +23,30 @@ router.get("/", async (req: Request, res: Response): Promise<void> => {
   }
 });
 
+// ดึงรายการงานของลูกค้าตาม ID
+router.get("/:id/jobs", async (req: Request, res: Response): Promise<void> => {
+  const { id } = req.params;
+  try {
+    const jobs = await prisma.job.findMany({
+      where: { customer_id: parseInt(id, 10) },
+      select: {
+        job_id: true,
+        job_number: true,
+        created_date: true,
+        end_date: true,
+        clothing_type: true,
+        type_of_fabric: true,
+      },
+      orderBy: { job_id: "desc" },
+    });
+
+    res.json(jobs);
+  } catch (error) {
+    console.error("Error fetching customer jobs:", error);
+    res.status(500).json({ error: "เกิดข้อผิดพลาดในการดึงงานของลูกค้า" });
+  }
+});
+
 // ดึงลูกค้าตาม ID
 router.get("/:id", async (req: Request, res: Response): Promise<void> => {
   const { id } = req.params;

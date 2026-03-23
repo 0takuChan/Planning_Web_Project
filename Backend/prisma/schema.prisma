@@ -43,6 +43,7 @@ model Customer {
   address_detail String @db.Text
 
   jobs Job[]
+  shipments Shipment[]
 }
 
 model Job {
@@ -63,19 +64,24 @@ model Job {
   jobSteps       JobStep[]
   plannings      Planning[]
   productionLogs ProductionLog[]
+  shipments      Shipment[]
+  productionSchedules ProductionSchedule[]
 }
 
 model Step {
   step_id   Int    @id @default(autoincrement())
   step_name String @unique @db.VarChar(50)
+  standard_time Int
 
   jobSteps JobStep[]
+  capacities StepCapacity[]
 }
 
 model JobStep {
   job_step_id Int     @id @default(autoincrement())
   job_id      Int
   step_id     Int
+  minutes_per_unit Int?
 
 
   job  Job  @relation(fields: [job_id], references: [job_id])
@@ -83,18 +89,21 @@ model JobStep {
 
   plannings      Planning[]
   productionLogs ProductionLog[]
+  shipmentItems       ShipmentItem[]
+  productionSchedules ProductionSchedule[]
+
 
   @@unique([job_id, step_id])
 }
 
 model Planning {
   planning_id      Int      @id @default(autoincrement())
-  job_id           Int?
+  job_id           Int
   job_step_id      Int
   planned_date     DateTime @db.Date
   planned_quantity Int
 
-  job     Job?    @relation(fields: [job_id], references: [job_id])
+  job     Job    @relation(fields: [job_id], references: [job_id])
   jobStep JobStep @relation(fields: [job_step_id], references: [job_step_id])
 
   @@unique([job_id, job_step_id, planned_date])
@@ -115,3 +124,85 @@ model ProductionLog {
   employee  Employee  @relation(fields: [employee_id], references: [employee_id])
 }
 
+
+
+
+
+
+model TransportType {
+  transport_type_id Int    @id @default(autoincrement())
+  transport_name    String @unique @db.VarChar(50)
+
+  shipments Shipment[] @relation("TransportToShipment")
+}
+
+model ShipmentStatus {
+  status_id   Int    @id @default(autoincrement())
+  status_name String @unique @db.VarChar(50)
+
+  shipments Shipment[] @relation("StatusToShipment")
+}
+
+model Shipment {
+  shipment_id       Int      @id @default(autoincrement())
+  shipment_numbar   String   @unique @db.VarChar(20)
+  customer_id       Int
+  job_id            Int
+  transport_type_id Int
+  status_id         Int
+  departure_date    DateTime @db.Date
+  arrival_date      DateTime @db.Date
+  actual_delivery_date DateTime? @db.Date
+  note              String?  @db.Text
+  total_quantity    Int      @default(0)
+
+  customer Customer @relation(fields: [customer_id], references: [customer_id])
+  job      Job      @relation(fields: [job_id], references: [job_id])
+
+  transportType TransportType @relation("TransportToShipment", fields: [transport_type_id], references: [transport_type_id])
+
+  status ShipmentStatus @relation("StatusToShipment", fields: [status_id], references: [status_id])
+
+  shipmentItems ShipmentItem[] @relation("ShipmentToItem")
+}
+
+model ShipmentItem {
+  shipment_item_id Int @id @default(autoincrement())
+  shipment_id      Int
+  job_step_id      Int
+  quantity         Int
+
+  shipment Shipment @relation("ShipmentToItem", fields: [shipment_id], references: [shipment_id])
+
+  jobStep JobStep @relation(fields: [job_step_id], references: [job_step_id])
+}
+
+model StepCapacity {
+  capacity_id  Int      @id @default(autoincrement())
+  step_id      Int
+  worker_count Int
+  work_date    DateTime @db.Date
+
+  step Step @relation(fields: [step_id], references: [step_id])
+}
+
+model ProductionSchedule {
+  schedule_id Int @id @default(autoincrement())
+
+  job_id      Int
+  job_step_id Int
+
+  schedule_date DateTime @db.Date
+  planned_qty   Int
+
+  jobStep JobStep @relation(fields: [job_step_id], references: [job_step_id])
+  job     Job     @relation(fields: [job_id], references: [job_id])
+}
+
+model WorkCalendar {
+  calendar_id Int      @id @default(autoincrement())
+  work_date   DateTime @db.Date
+  work_hour   Int
+
+  @@unique([work_date])
+}

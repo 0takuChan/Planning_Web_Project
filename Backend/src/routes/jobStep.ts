@@ -1,5 +1,5 @@
 import express, { Request, Response } from "express";
-import { PrismaClient, JobStep } from "@prisma/client";
+import { Prisma, PrismaClient, JobStep } from "@prisma/client";
 
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -8,7 +8,22 @@ const prisma = new PrismaClient();
 interface CreateJobStepBody {
   job_id: number;
   step_id: number;
+  minutes_per_unit?: number | null;
 }
+
+const parseMinutesPerUnit = (value: unknown) => {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+
+  const parsedValue = Number(value);
+
+  if (!Number.isFinite(parsedValue) || parsedValue < 0) {
+    return Number.NaN;
+  }
+
+  return Math.trunc(parsedValue);
+};
 
 // ดึง JobStep ทั้งหมด
 router.get("/", async (_req: Request, res: Response) => {
@@ -45,15 +60,26 @@ router.get("/:id", async (req: Request<{ id: string }>, res: Response) => {
 
 // เพิ่ม JobStep
 router.post("/", async (req: Request<{}, {}, CreateJobStepBody>, res: Response) => {
-  const { job_id, step_id } = req.body;
+  const { job_id, step_id, minutes_per_unit } = req.body;
+  const parsedMinutesPerUnit = parseMinutesPerUnit(minutes_per_unit);
 
   if (!job_id || !step_id) {
     return res.status(400).json({ error: "กรุณากรอก job_id และ step_id" });
   }
 
+  if (Number.isNaN(parsedMinutesPerUnit)) {
+    return res.status(400).json({ error: "minutes_per_unit ต้องเป็นตัวเลขจำนวนเต็มที่ไม่ติดลบ" });
+  }
+
   try {
+    const createData = {
+      job_id,
+      step_id,
+      minutes_per_unit: parsedMinutesPerUnit,
+    } as Prisma.JobStepUncheckedCreateInput;
+
     const newJobStep: JobStep = await prisma.jobStep.create({
-      data: { job_id, step_id },
+      data: createData,
     });
     res.status(201).json(newJobStep);
   } catch (error: any) {
@@ -68,10 +94,15 @@ router.post("/", async (req: Request<{}, {}, CreateJobStepBody>, res: Response) 
 // แก้ไข JobStep
 router.put("/:id", async (req: Request<{ id: string }, {}, CreateJobStepBody>, res: Response) => {
   const { id } = req.params;
-  const { job_id, step_id } = req.body;
+  const { job_id, step_id, minutes_per_unit } = req.body;
+  const parsedMinutesPerUnit = parseMinutesPerUnit(minutes_per_unit);
 
   if (!job_id || !step_id) {
     return res.status(400).json({ error: "กรุณากรอก job_id และ step_id" });
+  }
+
+  if (Number.isNaN(parsedMinutesPerUnit)) {
+    return res.status(400).json({ error: "minutes_per_unit ต้องเป็นตัวเลขจำนวนเต็มที่ไม่ติดลบ" });
   }
 
   try {
@@ -83,9 +114,15 @@ router.put("/:id", async (req: Request<{ id: string }, {}, CreateJobStepBody>, r
       return res.status(404).json({ error: "ไม่พบ JobStep นี้" });
     }
 
+    const updateData = {
+      job_id,
+      step_id,
+      minutes_per_unit: parsedMinutesPerUnit,
+    } as Prisma.JobStepUncheckedUpdateInput;
+
     const updatedJobStep = await prisma.jobStep.update({
       where: { job_step_id: parseInt(id, 10) },
-      data: { job_id, step_id },
+      data: updateData,
     });
 
     res.json(updatedJobStep);

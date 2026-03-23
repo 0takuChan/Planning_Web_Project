@@ -43,10 +43,10 @@ type MemberFormValues = {
 const ROLE_OPTIONS: RoleKey[] = ["admin", "planner", "orderer", "recorder"];
 
 const ROLE_DEFAULT_LABELS: Record<RoleKey, string> = {
-  admin: "Admin",
-  planner: "Planner",
-  orderer: "Orderer",
-  recorder: "Recorder",
+  admin: "ผู้ดูแลระบบ",
+  planner: "ฝ่ายวางแผนการผลิต",
+  orderer: "ฝ่ายรับออเดอร์",
+  recorder: "ฝ่ายบันทึกการผลิต",
 };
 
 const getDefaultRoleSettings = (): RoleSettingsMap =>

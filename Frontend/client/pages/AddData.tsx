@@ -20,8 +20,9 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { LayoutGrid, Trash2 } from "lucide-react";
+import { LayoutGrid, Trash2, List, ArrowUpDown, Search } from "lucide-react";
 import { usePermissions } from "@/App";
+import NewItemBadge from "@/components/common/NewItemBadge";
 
 // Interfaces สำหรับ API data
 interface Job {
@@ -280,6 +281,8 @@ export default function AddData() {
     key: "log_date",
     dir: -1, // ใหม่ที่สุดก่อน
   });
+  const [searchQuery, setSearchQuery] = useState("");
+  const [compactList, setCompactList] = useState(false);
 
   // Fetch current user
   useEffect(() => {
@@ -341,25 +344,53 @@ export default function AddData() {
     fetchData();
   }, []);
 
+  const filteredLogs = useMemo(() => {
+    const normalizedQuery = searchQuery.trim().toLowerCase();
+
+    if (!normalizedQuery) {
+      return productionLogs;
+    }
+
+    return productionLogs.filter((log) => {
+      const job = jobs.find((item) => item.job_id === log.job_id);
+      const jobStep = jobSteps.find((item) => item.job_step_id === log.job_step_id);
+      const values = [
+        log.log_id,
+        log.quantity,
+        log.log_date,
+        log.dateline_date,
+        job?.job_number,
+        job?.customer?.fullname,
+        job?.customer?.name,
+        jobStep?.step.step_name,
+        log.employee?.fullname,
+      ]
+        .filter(Boolean)
+        .map((value) => String(value).toLowerCase());
+
+      return values.some((value) => value.includes(normalizedQuery));
+    });
+  }, [jobs, jobSteps, productionLogs, searchQuery]);
+
   const sorted = useMemo(
     () =>
-      productionLogs
+      filteredLogs
         .slice()
         .sort((a, b) => {
           const aVal = a[sort.key];
           const bVal = b[sort.key];
-          
-          if (typeof aVal === 'string' && typeof bVal === 'string') {
+
+          if (typeof aVal === "string" && typeof bVal === "string") {
             return aVal.localeCompare(bVal) * sort.dir;
           }
-          
-          if (typeof aVal === 'number' && typeof bVal === 'number') {
+
+          if (typeof aVal === "number" && typeof bVal === "number") {
             return (aVal - bVal) * sort.dir;
           }
-          
+
           return (aVal > bVal ? 1 : -1) * sort.dir;
         }),
-    [productionLogs, sort],
+    [filteredLogs, sort],
   );
 
   const th = (k: keyof ProductionLog, label: string) => (
@@ -622,6 +653,41 @@ export default function AddData() {
             </Dialog>
           </div>
 
+          <div className="mt-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div className="relative w-full md:max-w-sm">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+              <input
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="ค้นหา job, step, จำนวน, วันที่ หรือพนักงาน"
+                className="w-full rounded-lg border border-slate-200 py-2 pl-9 pr-3 text-sm text-slate-700 shadow-sm transition focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[hsl(var(--brand-start))]"
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant={compactList ? "default" : "outline"}
+                onClick={() => setCompactList((current) => !current)}
+              >
+                <List className="mr-2 h-4 w-4" />
+                {compactList ? "Detailed List" : "List"}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() =>
+                  setSort((current) => ({
+                    key: "log_date",
+                    dir: current.key === "log_date" && current.dir === 1 ? -1 : 1,
+                  }))
+                }
+              >
+                <ArrowUpDown className="mr-2 h-4 w-4" />
+                Sort List {sort.key === "log_date" && sort.dir === 1 ? "Oldest" : "Newest"}
+              </Button>
+            </div>
+          </div>
+
           <div className="mt-3 overflow-x-auto">
             <table className="min-w-[800px] w-full text-sm">
               <thead className="text-slate-500 bg-gray-50">
@@ -647,15 +713,18 @@ export default function AddData() {
                     
                     return (
                       <tr key={log.log_id} className="border-t hover:bg-gray-50">
-                        <td className="py-3 px-2 font-medium text-slate-700">
-                          {job?.job_number || `Job ${log.job_id}`}
+                        <td className={`px-2 font-medium text-slate-700 ${compactList ? "py-2" : "py-3"}`}>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span>{job?.job_number || `Job ${log.job_id}`}</span>
+                            <NewItemBadge dateValue={log.log_date} />
+                          </div>
                         </td>
-                        <td className="py-3 px-2">
+                        <td className={compactList ? "py-2 px-2" : "py-3 px-2"}>
                           {jobStep?.step.step_name || "Unknown Step"}
                         </td>
-                        <td className="py-3 px-2">{log.quantity}</td>
-                        <td className="py-3 px-2">{formatDateDMY(log.log_date)}</td>
-                        <td className="py-3 px-2 text-right">
+                        <td className={compactList ? "py-2 px-2" : "py-3 px-2"}>{log.quantity}</td>
+                        <td className={compactList ? "py-2 px-2" : "py-3 px-2"}>{formatDateDMY(log.log_date)}</td>
+                        <td className={compactList ? "py-2 px-2 text-right" : "py-3 px-2 text-right"}>
                           <Button
                             variant="ghost"
                             size="sm"

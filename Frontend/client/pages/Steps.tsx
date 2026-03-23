@@ -38,7 +38,11 @@ import { usePermissions } from "@/App";
 interface Step {
   step_id: number;
   step_name: string;
+  standard_time: number;
 }
+
+const DAILY_CAPACITY_LABEL = "เวลาปฏิบัติงานสูงสุด/วัน";
+const DAILY_CAPACITY_PLACEHOLDER = "เช่น 480 นาที/วัน";
 
 export default function Steps() {
   const { canEdit } = usePermissions();
@@ -50,6 +54,7 @@ export default function Steps() {
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [editingStep, setEditingStep] = useState<Step | null>(null);
   const [stepName, setStepName] = useState("");
+  const [dailyCapacity, setDailyCapacity] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Fetch steps from API
@@ -83,10 +88,20 @@ export default function Steps() {
   };
 
   const handleAddStep = async () => {
-    if (!stepName.trim()) {
+    if (!stepName.trim() || !dailyCapacity.trim()) {
       toast({
         title: "Error",
-        description: "Please enter step name",
+        description: "Please enter step name and maximum daily capacity",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const parsedDailyCapacity = Number(dailyCapacity);
+    if (!Number.isFinite(parsedDailyCapacity) || parsedDailyCapacity <= 0) {
+      toast({
+        title: "Error",
+        description: "Maximum daily capacity must be a positive number",
         variant: "destructive",
       });
       return;
@@ -99,7 +114,10 @@ export default function Steps() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ step_name: stepName.trim() }),
+        body: JSON.stringify({
+          step_name: stepName.trim(),
+          standard_time: parsedDailyCapacity,
+        }),
       });
 
       if (!response.ok) {
@@ -110,6 +128,7 @@ export default function Steps() {
       const newStep = await response.json();
       setSteps([...steps, newStep]);
       setStepName("");
+      setDailyCapacity("");
       setIsAddDialogOpen(false);
       toast({
         title: "Success",
@@ -128,10 +147,20 @@ export default function Steps() {
   };
 
   const handleEditStep = async () => {
-    if (!editingStep || !stepName.trim()) {
+    if (!editingStep || !stepName.trim() || !dailyCapacity.trim()) {
       toast({
         title: "Error",
-        description: "Please enter step name",
+        description: "Please enter step name and maximum daily capacity",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const parsedDailyCapacity = Number(dailyCapacity);
+    if (!Number.isFinite(parsedDailyCapacity) || parsedDailyCapacity <= 0) {
+      toast({
+        title: "Error",
+        description: "Maximum daily capacity must be a positive number",
         variant: "destructive",
       });
       return;
@@ -144,7 +173,10 @@ export default function Steps() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ step_name: stepName.trim() }),
+        body: JSON.stringify({
+          step_name: stepName.trim(),
+          standard_time: parsedDailyCapacity,
+        }),
       });
 
       if (!response.ok) {
@@ -157,6 +189,7 @@ export default function Steps() {
         step.step_id === editingStep.step_id ? updatedStep : step
       ));
       setStepName("");
+      setDailyCapacity("");
       setEditingStep(null);
       setIsEditDialogOpen(false);
       toast({
@@ -230,16 +263,19 @@ export default function Steps() {
   const openEditDialog = (step: Step) => {
     setEditingStep(step);
     setStepName(step.step_name);
+    setDailyCapacity(String(step.standard_time ?? ""));
     setIsEditDialogOpen(true);
   };
 
   const resetAddDialog = () => {
     setStepName("");
+    setDailyCapacity("");
     setIsAddDialogOpen(false);
   };
 
   const resetEditDialog = () => {
     setStepName("");
+    setDailyCapacity("");
     setEditingStep(null);
     setIsEditDialogOpen(false);
   };
@@ -251,9 +287,9 @@ export default function Steps() {
         <div className="rounded-xl bg-gradient-to-r from-[hsl(var(--brand-start))] to-[hsl(var(--brand-end))] text-white p-6 shadow">
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-2xl font-bold">Step Management</h1>
+              <h1 className="text-2xl font-bold">Production Step Management</h1>
               <p className="text-white/80 mt-1">
-                Manage production processes
+                View and manage production line steps
               </p>
             </div>
             <div className="p-2 bg-white/10 rounded-lg">
@@ -280,35 +316,55 @@ export default function Steps() {
         {/* Add Step Button */}
         <div className="flex justify-between items-center">
           <div>
-            <h2 className="text-lg font-semibold">Steps List</h2>
-            <p className="text-sm text-gray-600">{steps.length} items</p>
+            <h2 className="text-lg font-semibold">รายการขั้นตอนผลิต</h2>
+            <p className="text-sm text-gray-600">ทั้งหมด {steps.length} รายการ</p>
           </div>
           
           {canEditPage && (
             <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
               <DialogTrigger asChild>
                 <Button onClick={() => setIsAddDialogOpen(true)}>
-                  <Plus className="h-4 w-4 mr-2" /> Add Step
+                  <Plus className="h-4 w-4 mr-2" /> เพิ่มขั้นตอน
                 </Button>
               </DialogTrigger>
               <DialogContent className="sm:max-w-[425px]">
                 <DialogHeader>
-                  <DialogTitle>Add New Step</DialogTitle>
+                  <DialogTitle>เพิ่มขั้นตอนการผลิต</DialogTitle>
                   <DialogDescription>
-                    Enter information for new step
+                    ระบุข้อมูลขั้นตอนในสายการผลิต
                   </DialogDescription>
                 </DialogHeader>
                 <div className="grid gap-4 py-4">
                   <div className="grid grid-cols-4 items-center gap-4">
                     <Label htmlFor="step-name" className="text-right">
-                      Step Name
+                      ชื่อขั้นตอน
                     </Label>
                     <Input
                       id="step-name"
                       value={stepName}
                       onChange={(e) => setStepName(e.target.value)}
                       className="col-span-3"
-                      placeholder="e.g. Cutting, Sewing"
+                      placeholder="เช่น ตัดผ้า, เย็บประกอบ"
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && !isSubmitting) {
+                          handleAddStep();
+                        }
+                      }}
+                    />
+                  </div>
+                  <div className="grid grid-cols-4 items-center gap-4">
+                    <Label htmlFor="standard-time" className="text-right">
+                      {DAILY_CAPACITY_LABEL}
+                    </Label>
+                    <Input
+                      id="standard-time"
+                      type="number"
+                      min="1"
+                      step="1"
+                      value={dailyCapacity}
+                      onChange={(e) => setDailyCapacity(e.target.value)}
+                      className="col-span-3"
+                      placeholder={DAILY_CAPACITY_PLACEHOLDER}
                       onKeyDown={(e) => {
                         if (e.key === "Enter" && !isSubmitting) {
                           handleAddStep();
@@ -323,13 +379,13 @@ export default function Steps() {
                     onClick={resetAddDialog}
                     disabled={isSubmitting}
                   >
-                    Cancel
+                    ยกเลิก
                   </Button>
                   <Button 
                     onClick={handleAddStep}
-                    disabled={isSubmitting || !stepName.trim()}
+                    disabled={isSubmitting || !stepName.trim() || !dailyCapacity.trim()}
                   >
-                    {isSubmitting ? "Adding..." : "Add"}
+                    {isSubmitting ? "กำลังเพิ่ม..." : "บันทึก"}
                   </Button>
                 </DialogFooter>
               </DialogContent>
@@ -342,17 +398,18 @@ export default function Steps() {
           {loading ? (
             <div className="p-8 text-center">
               <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-[hsl(var(--brand-end))]"></div>
-              <p className="mt-4 text-gray-600">Loading...</p>
+              <p className="mt-4 text-gray-600">กำลังโหลด...</p>
             </div>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead className="w-16">#</TableHead>
-                  <TableHead>Step Name</TableHead>
-                  <TableHead>Step ID</TableHead>
+                  <TableHead className="w-16">ลำดับ</TableHead>
+                  <TableHead>ขั้นตอน</TableHead>
+                  <TableHead>เวลาปฏิบัติงานสูงสุด/วัน</TableHead>
+                  <TableHead>รหัสขั้นตอน</TableHead>
                   {canEditPage && (
-                    <TableHead className="text-right w-32">Actions</TableHead>
+                    <TableHead className="text-right w-32">จัดการ</TableHead>
                   )}
                 </TableRow>
               </TableHeader>
@@ -360,10 +417,10 @@ export default function Steps() {
                 {steps.length === 0 ? (
                   <TableRow>
                     <TableCell 
-                      colSpan={canEditPage ? 4 : 3} 
+                      colSpan={canEditPage ? 5 : 4} 
                       className="text-center py-8 text-gray-500"
                     >
-                      No steps found
+                      ยังไม่มีรายการขั้นตอนผลิต
                     </TableCell>
                   </TableRow>
                 ) : (
@@ -374,6 +431,9 @@ export default function Steps() {
                       </TableCell>
                       <TableCell className="font-medium">
                         {step.step_name}
+                      </TableCell>
+                      <TableCell className="text-gray-600">
+                        {step.standard_time.toLocaleString()}
                       </TableCell>
                       <TableCell className="text-gray-600">
                         {step.step_id}
@@ -394,22 +454,42 @@ export default function Steps() {
                               </DialogTrigger>
                               <DialogContent className="sm:max-w-[425px]">
                                 <DialogHeader>
-                                  <DialogTitle>Edit Step</DialogTitle>
+                                  <DialogTitle>แก้ไขขั้นตอนการผลิต</DialogTitle>
                                   <DialogDescription>
-                                    Edit step information: {editingStep?.step_name}
+                                    ปรับข้อมูลขั้นตอน: {editingStep?.step_name}
                                   </DialogDescription>
                                 </DialogHeader>
                                 <div className="grid gap-4 py-4">
                                   <div className="grid grid-cols-4 items-center gap-4">
                                     <Label htmlFor="edit-step-name" className="text-right">
-                                      Step Name
+                                      ชื่อขั้นตอน
                                     </Label>
                                     <Input
                                       id="edit-step-name"
                                       value={stepName}
                                       onChange={(e) => setStepName(e.target.value)}
                                       className="col-span-3"
-                                      placeholder="e.g. Cutting, Sewing"
+                                      placeholder="เช่น ตัดผ้า, เย็บประกอบ"
+                                      onKeyDown={(e) => {
+                                        if (e.key === "Enter" && !isSubmitting) {
+                                          handleEditStep();
+                                        }
+                                      }}
+                                    />
+                                  </div>
+                                  <div className="grid grid-cols-4 items-center gap-4">
+                                    <Label htmlFor="edit-standard-time" className="text-right">
+                                      {DAILY_CAPACITY_LABEL}
+                                    </Label>
+                                    <Input
+                                      id="edit-standard-time"
+                                      type="number"
+                                      min="1"
+                                      step="1"
+                                      value={dailyCapacity}
+                                      onChange={(e) => setDailyCapacity(e.target.value)}
+                                      className="col-span-3"
+                                      placeholder={DAILY_CAPACITY_PLACEHOLDER}
                                       onKeyDown={(e) => {
                                         if (e.key === "Enter" && !isSubmitting) {
                                           handleEditStep();
@@ -424,13 +504,13 @@ export default function Steps() {
                                     onClick={resetEditDialog}
                                     disabled={isSubmitting}
                                   >
-                                    Cancel
+                                    ยกเลิก
                                   </Button>
                                   <Button 
                                     onClick={handleEditStep}
-                                    disabled={isSubmitting || !stepName.trim()}
+                                    disabled={isSubmitting || !stepName.trim() || !dailyCapacity.trim()}
                                   >
-                                    {isSubmitting ? "Saving..." : "Save"}
+                                    {isSubmitting ? "กำลังบันทึก..." : "บันทึก"}
                                   </Button>
                                 </DialogFooter>
                               </DialogContent>
@@ -449,19 +529,19 @@ export default function Steps() {
                               </AlertDialogTrigger>
                               <AlertDialogContent>
                                 <AlertDialogHeader>
-                                  <AlertDialogTitle>Confirm Deletion</AlertDialogTitle>
+                                  <AlertDialogTitle>ยืนยันการลบขั้นตอน</AlertDialogTitle>
                                   <AlertDialogDescription>
-                                    Are you sure you want to delete step "{step.step_name}"? 
-                                    This action cannot be undone.
+                                    ต้องการลบขั้นตอน "{step.step_name}" ใช่หรือไม่?
+                                    การลบนี้ไม่สามารถกู้คืนได้
                                   </AlertDialogDescription>
                                 </AlertDialogHeader>
                                 <AlertDialogFooter>
-                                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                  <AlertDialogCancel>ยกเลิก</AlertDialogCancel>
                                   <AlertDialogAction
                                     onClick={() => handleDeleteStep(step)}
                                     className="bg-red-600 hover:bg-red-700"
                                   >
-                                    Delete
+                                    ลบขั้นตอน
                                   </AlertDialogAction>
                                 </AlertDialogFooter>
                               </AlertDialogContent>

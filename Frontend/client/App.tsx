@@ -16,6 +16,8 @@ import Admin from "./pages/Admin";
 import Login from "./pages/Login";
 import Summary from "./pages/Summary";
 import Steps from "./pages/Steps"; // เพิ่ม import
+import Transportation from "@/pages/Transportation";
+import TransportationDetail from "@/pages/TransportationDetail";
 import { toast } from "@/hooks/use-toast";
 
 const queryClient = new QueryClient();
@@ -70,6 +72,10 @@ const PAGE_PERMISSIONS: Record<string, { view: RoleKey[], edit: RoleKey[] }> = {
   "/steps": { // เพิ่ม permissions สำหรับ steps page
     view: ALL_ROLES,
     edit: ["Admin"],
+  },
+  "/transportation": {
+    view: ALL_ROLES,
+    edit: ["Admin", "Planner"],
   },
   "/admin": {
     view: ["Admin"],
@@ -182,6 +188,11 @@ export default function App() {
               <Route path="/add-data" element={<RoleBasedRoute path="/add-data"><AddData /></RoleBasedRoute>} />
               <Route path="/summary" element={<RoleBasedRoute path="/summary"><Summary /></RoleBasedRoute>} />
               <Route path="/steps" element={<RoleBasedRoute path="/steps"><Steps /></RoleBasedRoute>} /> {/* เพิ่ม route */}
+              <Route path="/transportation" element={<RoleBasedRoute path="/transportation"><Transportation /></RoleBasedRoute>} />
+              <Route
+                path="/transportation/:shipmentId"
+                element={<RoleBasedRoute path="/transportation"><TransportationDetail /></RoleBasedRoute>}
+              />
               <Route path="/admin" element={<RoleBasedRoute path="/admin"><Admin /></RoleBasedRoute>} />
               <Route path="*" element={<NotFound />} />
             </Routes>
