@@ -4,8 +4,11 @@ import { parseISO, startOfMonth, addMonths, getDaysInMonth, addDays, format } fr
 import StepWeekGrid, { StepEvent } from "../components/planning/StepWeekGrid";
 import AppLayout from "@/components/layout/Sidebar";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { usePermissions } from "@/App";
-import { List, ArrowUpDown, Search, Sparkles } from "lucide-react";
+import { apiFetch } from "@/lib/api";
+import { cn } from "@/lib/utils";
+import { List, ArrowUpDown, Search, Sparkles, AlertTriangle, CheckCircle2, Info } from "lucide-react";
 import NewItemBadge from "@/components/common/NewItemBadge";
 
 interface Job {
@@ -27,6 +30,7 @@ interface JobStep {
   job_step_id: number;
   job_id: number;
   step_id: number;
+  minutes_per_unit?: number | null;
   step?: {
     step_name: string;
   };
@@ -56,6 +60,18 @@ interface JobItem {
   createdAt?: string;
 }
 
+type JobListFilter = 'all' | 'unplanned' | 'planned' | 'complete';
+type PlanningSortField = 'job' | 'step' | 'date' | 'quantity';
+type AutoPlanFeedbackTone = 'success' | 'error' | 'info';
+
+interface AutoPlanFeedbackState {
+  open: boolean;
+  tone: AutoPlanFeedbackTone;
+  title: string;
+  message: string;
+  details: string[];
+}
+
 const stepColorPalette: Record<string, string> = {
   "Cutting": "#86efac",
   "Heating": "#fca5a5",
@@ -65,8 +81,75 @@ const stepColorPalette: Record<string, string> = {
   "Pack": "#f0abfc",
 };
 
+const generatedStepColors = new Map<string, string>();
+
+function hslToHex(hue: number, saturation: number, lightness: number): string {
+  const normalizedHue = hue / 360;
+  const normalizedSaturation = saturation / 100;
+  const normalizedLightness = lightness / 100;
+
+  const hueToRgb = (p: number, q: number, t: number) => {
+    let value = t;
+    if (value < 0) value += 1;
+    if (value > 1) value -= 1;
+    if (value < 1 / 6) return p + (q - p) * 6 * value;
+    if (value < 1 / 2) return q;
+    if (value < 2 / 3) return p + (q - p) * (2 / 3 - value) * 6;
+    return p;
+  };
+
+  let red: number;
+  let green: number;
+  let blue: number;
+
+  if (normalizedSaturation === 0) {
+    red = normalizedLightness;
+    green = normalizedLightness;
+    blue = normalizedLightness;
+  } else {
+    const q = normalizedLightness < 0.5
+      ? normalizedLightness * (1 + normalizedSaturation)
+      : normalizedLightness + normalizedSaturation - normalizedLightness * normalizedSaturation;
+    const p = 2 * normalizedLightness - q;
+    red = hueToRgb(p, q, normalizedHue + 1 / 3);
+    green = hueToRgb(p, q, normalizedHue);
+    blue = hueToRgb(p, q, normalizedHue - 1 / 3);
+  }
+
+  const toHex = (value: number) => Math.round(value * 255).toString(16).padStart(2, "0");
+  return `#${toHex(red)}${toHex(green)}${toHex(blue)}`;
+}
+
+function getStepColor(stepName: string): string {
+  if (stepColorPalette[stepName]) {
+    return stepColorPalette[stepName];
+  }
+
+  const cachedColor = generatedStepColors.get(stepName);
+  if (cachedColor) {
+    return cachedColor;
+  }
+
+  let hash = 0;
+  for (let index = 0; index < stepName.length; index += 1) {
+    hash = (hash * 31 + stepName.charCodeAt(index)) % 360;
+  }
+
+  const generatedColor = hslToHex(hash, 72, 72);
+  generatedStepColors.set(stepName, generatedColor);
+  return generatedColor;
+}
+
 // API Base URL
 const API_BASE_URL = 'http://localhost:4000/api';
+
+function getApiDateOnly(dateValue: string): string {
+  return dateValue.split('T')[0];
+}
+
+function parseApiDate(dateValue: string): Date {
+  return parseISO(getApiDateOnly(dateValue));
+}
 
 export default function Planning() {
   const { canEdit } = usePermissions();
@@ -95,15 +178,25 @@ export default function Planning() {
     top: number;
   }>(null);
   const [hiddenJobs, setHiddenJobs] = useState<Set<string>>(new Set());
-  const [showCompletedJobs, setShowCompletedJobs] = useState<boolean>(true);
+  const [jobListFilter, setJobListFilter] = useState<JobListFilter>('all');
   const [jobSearchQuery, setJobSearchQuery] = useState<string>('');
   const [jobSortDescending, setJobSortDescending] = useState<boolean>(true);
   const [planningSearchQuery, setPlanningSearchQuery] = useState<string>('');
   const [planningCompactList, setPlanningCompactList] = useState<boolean>(false);
+  const [planningSortField, setPlanningSortField] = useState<PlanningSortField>('date');
   const [planningSortDescending, setPlanningSortDescending] = useState<boolean>(true);
+  const [locatingPlanningId, setLocatingPlanningId] = useState<number | null>(null);
   const [isAutoPlanLoading, setIsAutoPlanLoading] = useState<boolean>(false);
   const [autoPlanProcessedCount, setAutoPlanProcessedCount] = useState<number>(0);
   const [autoPlanTotalCount, setAutoPlanTotalCount] = useState<number>(0);
+  const [activeAutoPlanLabel, setActiveAutoPlanLabel] = useState<string | null>(null);
+  const [autoPlanFeedback, setAutoPlanFeedback] = useState<AutoPlanFeedbackState>({
+    open: false,
+    tone: 'info',
+    title: '',
+    message: '',
+    details: [],
+  });
 
   // Data from API
   const [jobs, setJobs] = useState<JobItem[]>([]);
@@ -117,16 +210,66 @@ export default function Planning() {
     startOfMonth(new Date())
   );
 
+  const showAutoPlanFeedback = (
+    tone: AutoPlanFeedbackTone,
+    title: string,
+    message: string,
+    details: string[] = []
+  ) => {
+    const normalizedDetails = details
+      .flatMap((detail) => String(detail).split('\n'))
+      .map((detail) => detail.trim())
+      .filter(Boolean);
+
+    setAutoPlanFeedback({
+      open: true,
+      tone,
+      title,
+      message,
+      details: normalizedDetails,
+    });
+  };
+
+  const refreshPlanningState = async () => {
+    const planningsRes = await apiFetch(`${API_BASE_URL}/plannings`);
+    const planningsData: Planning[] = await planningsRes.json();
+    setPlannings(planningsData);
+
+    const transformedEvents: StepEvent[] = planningsData
+      .filter(planning => planning.jobStep?.job && planning.jobStep?.step)
+      .map(planning => {
+        const plannedDate = parseApiDate(planning.planned_date);
+        const monthStart = startOfMonth(currentDate);
+        const dayDiff = Math.floor((plannedDate.getTime() - monthStart.getTime()) / (1000 * 60 * 60 * 24));
+
+        return {
+          id: `planning-${planning.planning_id}`,
+          planning_id: planning.planning_id,
+          step: planning.jobStep!.step!.step_name,
+          day: dayDiff + 1,
+          jobId: planning.jobStep!.job!.job_number,
+          qty: planning.planned_quantity,
+          color: getStepColor(planning.jobStep!.step!.step_name),
+          date: getApiDateOnly(planning.planned_date),
+          job_step_id: planning.job_step_id,
+          minutesPerUnit: jobSteps.find((jobStep) => jobStep.job_step_id === planning.job_step_id)?.minutes_per_unit ?? null,
+        };
+      });
+
+    setEvents(transformedEvents);
+    setSelected(null);
+  };
+
   // Fetch data from API
   useEffect(() => {
     const fetchData = async () => {
       try {
         setLoading(true);
         const [jobsRes, stepsRes, jobStepsRes, planningsRes] = await Promise.all([
-          fetch(`${API_BASE_URL}/jobs`),
-          fetch(`${API_BASE_URL}/steps`),
-          fetch(`${API_BASE_URL}/jobsteps`),
-          fetch(`${API_BASE_URL}/plannings`),
+          apiFetch(`${API_BASE_URL}/jobs`),
+          apiFetch(`${API_BASE_URL}/steps`),
+          apiFetch(`${API_BASE_URL}/jobsteps`),
+          apiFetch(`${API_BASE_URL}/plannings`),
         ]);
 
         const jobsData: Job[] = await jobsRes.json();
@@ -150,7 +293,7 @@ export default function Planning() {
         // Transform steps data with colors
         const transformedSteps = stepsData.map(step => ({
           key: step.step_name,
-          color: stepColorPalette[step.step_name] || "#9ca3af",
+          color: getStepColor(step.step_name),
         }));
 
         setJobs(transformedJobs);
@@ -159,14 +302,13 @@ export default function Planning() {
         setJobSteps(jobStepsData);
         setPlannings(planningsData);
 
-        // Transform plannings to events
         const transformedEvents: StepEvent[] = planningsData
-          .filter(planning => planning.jobStep?.job && planning.jobStep?.step) // Filter out invalid data
+          .filter(planning => planning.jobStep?.job && planning.jobStep?.step)
           .map(planning => {
-            const plannedDate = new Date(planning.planned_date);
+            const plannedDate = parseApiDate(planning.planned_date);
             const monthStart = startOfMonth(currentDate);
             const dayDiff = Math.floor((plannedDate.getTime() - monthStart.getTime()) / (1000 * 60 * 60 * 24));
-            
+
             return {
               id: `planning-${planning.planning_id}`,
               planning_id: planning.planning_id,
@@ -174,9 +316,10 @@ export default function Planning() {
               day: dayDiff + 1,
               jobId: planning.jobStep!.job!.job_number,
               qty: planning.planned_quantity,
-              color: stepColorPalette[planning.jobStep!.step!.step_name] || "#9ca3af",
-              date: new Date(planning.planned_date).toISOString().split('T')[0],
+              color: getStepColor(planning.jobStep!.step!.step_name),
+              date: getApiDateOnly(planning.planned_date),
               job_step_id: planning.job_step_id,
+              minutesPerUnit: jobStepsData.find((jobStep) => jobStep.job_step_id === planning.job_step_id)?.minutes_per_unit ?? null,
             };
           });
 
@@ -205,8 +348,9 @@ export default function Planning() {
         return {
           job_step_id: js.job_step_id,
           step_id: js.step_id,
+          minutes_per_unit: js.minutes_per_unit,
           key: stepName,
-          color: stepColorPalette[stepName] || "#9ca3af",
+          color: getStepColor(stepName),
         };
       })
       .filter(s => s.key); // Filter out any empty step names
@@ -283,6 +427,12 @@ export default function Planning() {
     return Math.max(0, job.quantity - used);
   };
 
+  const calcPlannedStep = (jobId: string, step: string) => {
+    return events
+      .filter((event) => event.jobId === jobId && event.step === step)
+      .reduce((sum, event) => sum + (event.qty || 0), 0);
+  };
+
   const isJobComplete = (jobId: string, evs: StepEvent[] = events) => {
     const job = jobs.find((j) => j.id === jobId);
     if (!job) return false;
@@ -299,10 +449,42 @@ export default function Planning() {
     });
   };
 
-  const filteredJobsList = useMemo(() => {
-    let filtered = jobs.filter(
-      (j) => showCompletedJobs || !isJobComplete(j.id)
+  const getJobPlanningStatus = (jobId: string, evs: StepEvent[] = events): Exclude<JobListFilter, 'all'> => {
+    if (isJobComplete(jobId, evs)) {
+      return 'complete';
+    }
+
+    const hasPlanning = evs.some((event) => event.jobId === jobId);
+    return hasPlanning ? 'planned' : 'unplanned';
+  };
+
+  const hasJobPlanning = (jobId: string, evs: StepEvent[] = events) =>
+    evs.some((event) => event.jobId === jobId);
+
+  const jobStatusCounts = useMemo(() => {
+    return jobs.reduce(
+      (counts, job) => {
+        const status = getJobPlanningStatus(job.id);
+        counts[status] += 1;
+        return counts;
+      },
+      {
+        all: jobs.length,
+        unplanned: 0,
+        planned: 0,
+        complete: 0,
+      } as Record<JobListFilter, number>
     );
+  }, [jobs, events, jobSteps, stepsData]);
+
+  const filteredJobsList = useMemo(() => {
+    let filtered = jobs.filter((job) => {
+      if (jobListFilter === 'all') {
+        return true;
+      }
+
+      return getJobPlanningStatus(job.id) === jobListFilter;
+    });
 
     if (jobSearchQuery) {
       const query = jobSearchQuery.toLowerCase();
@@ -321,7 +503,7 @@ export default function Planning() {
     });
 
     return filtered;
-  }, [jobs, showCompletedJobs, jobSearchQuery, jobSortDescending]);
+  }, [jobs, jobListFilter, jobSearchQuery, jobSortDescending, events, jobSteps, stepsData]);
 
   const filteredPlanningsList = useMemo(() => {
     let filtered = plannings.filter(rec => rec.jobStep?.job && rec.jobStep?.step);
@@ -337,13 +519,67 @@ export default function Planning() {
     }
 
     filtered.sort((a, b) => {
-      const dateA = new Date(a.planned_date).getTime();
-      const dateB = new Date(b.planned_date).getTime();
-      return planningSortDescending ? dateB - dateA : dateA - dateB;
+      let comparison = 0;
+
+      if (planningSortField === 'job') {
+        comparison = (a.jobStep?.job?.job_number ?? '').localeCompare(b.jobStep?.job?.job_number ?? '');
+      } else if (planningSortField === 'step') {
+        comparison = (a.jobStep?.step?.step_name ?? '').localeCompare(b.jobStep?.step?.step_name ?? '');
+      } else if (planningSortField === 'quantity') {
+        comparison = a.planned_quantity - b.planned_quantity;
+      } else {
+        const dateA = parseApiDate(a.planned_date).getTime();
+        const dateB = parseApiDate(b.planned_date).getTime();
+        comparison = dateA - dateB;
+      }
+
+      if (comparison === 0) {
+        comparison = parseApiDate(a.planned_date).getTime() - parseApiDate(b.planned_date).getTime();
+      }
+
+      return planningSortDescending ? -comparison : comparison;
     });
 
     return filtered;
-  }, [plannings, planningSearchQuery, planningSortDescending]);
+  }, [plannings, planningSearchQuery, planningSortDescending, planningSortField]);
+
+  const filteredPlanningEvents = useMemo(() => {
+    if (!planningSearchQuery.trim()) {
+      return events;
+    }
+
+    const visiblePlanningIds = new Set(filteredPlanningsList.map((planning) => planning.planning_id));
+    return events.filter(
+      (event) => event.planning_id !== undefined && visiblePlanningIds.has(event.planning_id)
+    );
+  }, [events, filteredPlanningsList, planningSearchQuery]);
+
+  const selectedPlanningRecord = useMemo(
+    () => filteredPlanningsList.find((planning) => planning.planning_id === locatingPlanningId) ?? null,
+    [filteredPlanningsList, locatingPlanningId]
+  );
+
+  const handlePlanningSort = (field: PlanningSortField) => {
+    if (planningSortField === field) {
+      setPlanningSortDescending((previous) => !previous);
+      return;
+    }
+
+    setPlanningSortField(field);
+    setPlanningSortDescending(field === 'date' || field === 'quantity');
+  };
+
+  const handleLocatePlanningRecord = (planning: Planning) => {
+    const currentScrollY = window.scrollY;
+    const planningDate = parseApiDate(planning.planned_date);
+    setCurrentDate(startOfMonth(planningDate));
+    setCurrentWeekPage(Math.floor((planningDate.getDate() - 1) / 7));
+    setLocatingPlanningId(planning.planning_id);
+
+    requestAnimationFrame(() => {
+      window.scrollTo({ top: currentScrollY, behavior: 'auto' });
+    });
+  };
 
   const askQuantity = (
     info: { step: string; day: number; jobId: string; date: string },
@@ -412,7 +648,7 @@ export default function Planning() {
 
     try {
       // Call API to create planning
-      const response = await fetch(`${API_BASE_URL}/plannings`, {
+      const response = await apiFetch(`${API_BASE_URL}/plannings`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -460,6 +696,7 @@ export default function Planning() {
         color,
         date: qtyPopup.date,
         job_step_id: qtyPopup.job_step_id,
+        minutesPerUnit: jobSteps.find((jobStep) => jobStep.job_step_id === qtyPopup.job_step_id)?.minutes_per_unit ?? null,
       };
 
       setEvents((prev) => [...prev, newEvent]);
@@ -478,7 +715,7 @@ export default function Planning() {
     if (!event || !event.planning_id) return;
 
     try {
-      const response = await fetch(`${API_BASE_URL}/plannings/${event.planning_id}`, {
+      const response = await apiFetch(`${API_BASE_URL}/plannings/${event.planning_id}`, {
         method: 'DELETE',
       });
 
@@ -513,7 +750,7 @@ export default function Planning() {
     if (!newJobStep) return;
 
     try {
-      const response = await fetch(`${API_BASE_URL}/plannings/${event.planning_id}`, {
+      const response = await apiFetch(`${API_BASE_URL}/plannings/${event.planning_id}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -545,6 +782,7 @@ export default function Planning() {
           date: newDate,
           color: steps.find((s) => s.key === newStep)?.color || oldEvent.color,
           job_step_id: newJobStep.job_step_id,
+          minutesPerUnit: newJobStep.minutes_per_unit ?? null,
           day: (() => {
             try {
               const eventDate = new Date(newDate);
@@ -597,15 +835,67 @@ export default function Planning() {
     }
   };
 
+  const handleToday = () => {
+    const today = new Date();
+    setCurrentDate(startOfMonth(today));
+    setCurrentWeekPage(Math.floor((today.getDate() - 1) / 7));
+  };
+
+  const handleAutoPlanJob = async (job: JobItem) => {
+    if (isAutoPlanLoading) return;
+
+    try {
+      setIsAutoPlanLoading(true);
+      setAutoPlanTotalCount(1);
+      setAutoPlanProcessedCount(0);
+      setActiveAutoPlanLabel(job.id);
+
+      const response = await apiFetch(`${API_BASE_URL}/plannings/auto-plan`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ job_id: job.job_id }),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        showAutoPlanFeedback(
+          'error',
+          `Auto Plan ไม่สำเร็จสำหรับ ${job.id}`,
+          result.message || `เกิดข้อผิดพลาดในการวางแผน ${job.id}`
+        );
+        return;
+      }
+
+      setAutoPlanProcessedCount(1);
+      await refreshPlanningState();
+      showAutoPlanFeedback(
+        'success',
+        `Auto Plan สำเร็จสำหรับ ${job.id}`,
+        `สร้างแผนการแล้ว ${result.count || 0} records`
+      );
+    } catch (error) {
+      console.error('Error calling auto-plan for job:', error);
+      showAutoPlanFeedback('error', `Auto Plan ไม่สำเร็จสำหรับ ${job.id}`, `เกิดข้อผิดพลาดในการใช้ Auto Plan สำหรับ ${job.id}`);
+    } finally {
+      setIsAutoPlanLoading(false);
+      setAutoPlanProcessedCount(0);
+      setAutoPlanTotalCount(0);
+      setActiveAutoPlanLabel(null);
+    }
+  };
+
   const handleAutoPlanAll = async () => {
     if (!filteredJobsList.length) {
-      alert('ไม่มี Job ที่สามารถสร้างแผนการได้');
+      showAutoPlanFeedback('info', 'ยังไม่มี Job ให้สร้างแผน', 'ไม่มี Job ที่สามารถสร้างแผนการได้');
       return;
     }
 
     const incompleteJobs = filteredJobsList.filter(job => !isJobComplete(job.id));
     if (!incompleteJobs.length) {
-      alert('ทั้งหมด Job เสร็จแล้ว');
+      showAutoPlanFeedback('info', 'ทุก Job ถูกวางแผนแล้ว', 'ทั้งหมด Job เสร็จแล้ว');
       return;
     }
 
@@ -613,8 +903,9 @@ export default function Planning() {
       setIsAutoPlanLoading(true);
       setAutoPlanTotalCount(incompleteJobs.length);
       setAutoPlanProcessedCount(0);
+      setActiveAutoPlanLabel(`${incompleteJobs.length} jobs`);
       
-      const response = await fetch(`${API_BASE_URL}/plannings/auto-plan-batch`, {
+      const response = await apiFetch(`${API_BASE_URL}/plannings/auto-plan-batch`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -629,9 +920,15 @@ export default function Planning() {
       if (!response.ok) {
         let errorMessage = result.message || 'เกิดข้อผิดพลาดในการใช้ Auto Plan All';
         if (Array.isArray(result.failedJobs) && result.failedJobs.length > 0) {
-          errorMessage += `\n\n${result.failedJobs.join('\n')}`;
+          showAutoPlanFeedback(
+            'error',
+            'Auto Plan All ไม่สำเร็จ',
+            errorMessage,
+            result.failedJobs
+          );
+          return;
         }
-        alert(errorMessage);
+        showAutoPlanFeedback('error', 'Auto Plan All ไม่สำเร็จ', errorMessage);
         return;
       }
 
@@ -641,47 +938,55 @@ export default function Planning() {
       const successCount = result.jobCount || 0;
       const failedJobs = Array.isArray(result.failedJobs) ? result.failedJobs : [];
 
-      // Refresh planning data
-      const planningsRes = await fetch(`${API_BASE_URL}/plannings`);
-      const planningsData: Planning[] = await planningsRes.json();
-      setPlannings(planningsData);
-      
-      // Update events
-      const transformedEvents: StepEvent[] = planningsData
-        .filter(planning => planning.jobStep?.job && planning.jobStep?.step)
-        .map(planning => {
-          const plannedDate = new Date(planning.planned_date);
-          const monthStart = startOfMonth(currentDate);
-          const dayDiff = Math.floor((plannedDate.getTime() - monthStart.getTime()) / (1000 * 60 * 60 * 24));
-          
-          return {
-            id: `planning-${planning.planning_id}`,
-            planning_id: planning.planning_id,
-            step: planning.jobStep!.step!.step_name,
-            day: dayDiff + 1,
-            jobId: planning.jobStep!.job!.job_number,
-            qty: planning.planned_quantity,
-            color: stepColorPalette[planning.jobStep!.step!.step_name] || "#9ca3af",
-            date: new Date(planning.planned_date).toISOString().split('T')[0],
-            job_step_id: planning.job_step_id,
-          };
-        });
-      
-      setEvents(transformedEvents);
-      setSelected(null);
+      await refreshPlanningState();
 
       let message = `✅ สำเร็จ: ${successCount}/${incompleteJobs.length} Jobs สร้างแผนการแล้ว (${totalCreated} Planning Records)`;
-      if (failedJobs.length > 0) {
-        message += `\n\n❌ ไม่สำเร็จ:\n${failedJobs.join('\n')}`;
-      }
-      alert(message);
+      showAutoPlanFeedback(
+        failedJobs.length > 0 ? 'info' : 'success',
+        failedJobs.length > 0 ? 'Auto Plan All เสร็จสิ้นแบบมีบาง Job ไม่สำเร็จ' : 'Auto Plan All สำเร็จ',
+        message,
+        failedJobs.length > 0 ? failedJobs : []
+      );
     } catch (error) {
       console.error('Error calling auto-plan:', error);
-      alert('เกิดข้อผิดพลาดในการใช้ Auto Plan All');
+      showAutoPlanFeedback('error', 'Auto Plan All ไม่สำเร็จ', 'เกิดข้อผิดพลาดในการใช้ Auto Plan All');
     } finally {
       setIsAutoPlanLoading(false);
       setAutoPlanProcessedCount(0);
       setAutoPlanTotalCount(0);
+      setActiveAutoPlanLabel(null);
+    }
+  };
+
+  const handleClearJobPlanning = async (job: JobItem) => {
+    if (!canEditPage) return;
+    if (!hasJobPlanning(job.id)) {
+      alert(`ยังไม่มี planning สำหรับ ${job.id}`);
+      return;
+    }
+
+    const confirmed = window.confirm(`ลบ planning ทั้งหมดของ ${job.id} ใช่หรือไม่?`);
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      const response = await apiFetch(`${API_BASE_URL}/plannings/job/${job.job_id}`, {
+        method: 'DELETE',
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        alert(result.error || `เกิดข้อผิดพลาดในการลบ planning ของ ${job.id}`);
+        return;
+      }
+
+      await refreshPlanningState();
+      alert(`ลบ planning ของ ${job.id} แล้ว ${result.count || 0} records`);
+    } catch (error) {
+      console.error('Error clearing job planning:', error);
+      alert(`เกิดข้อผิดพลาดในการลบ planning ของ ${job.id}`);
     }
   };
 
@@ -744,6 +1049,12 @@ export default function Planning() {
 
                 <div className="flex items-center gap-2">
                   <button
+                    className="px-3 py-1 rounded border bg-slate-900 text-white hover:bg-slate-800"
+                    onClick={handleToday}
+                  >
+                    Today
+                  </button>
+                  <button
                     className="px-2 py-1 rounded border hover:bg-slate-50"
                     onClick={navigatePrevious}
                   >
@@ -784,12 +1095,18 @@ export default function Planning() {
               <StepWeekGrid
                 startDate={addDays(startDate, weekStartDay - 1)}
                 steps={steps}
-                events={events}
+                events={filteredPlanningEvents}
+                locatingPlanningId={locatingPlanningId}
                 viewMode={viewMode}
                 daysToShow={daysToShow}
                 onAskQuantity={askQuantity}
                 onRemoveEvent={removeEvent}
                 onMoveEvent={moveEvent}
+                onLocatePlanningSeen={(planningId) => {
+                  if (planningId === locatingPlanningId) {
+                    setLocatingPlanningId(null);
+                  }
+                }}
                 onAskDelete={(ev, anchor) =>
                   setDeletePopup({
                     id: ev.id,
@@ -916,6 +1233,7 @@ export default function Planning() {
           <div className="relative min-w-0 max-w-full overflow-hidden rounded-lg border bg-white p-4">
             <div className="mb-3 flex items-center justify-between">
               <div className="font-semibold">Job list</div>
+              <div className="text-xs text-slate-500">{filteredJobsList.length} jobs</div>
             </div>
             <div className="mb-3 flex flex-wrap items-center gap-2">
               <div className="relative flex-1 min-w-[200px]">
@@ -936,35 +1254,103 @@ export default function Planning() {
                 <ArrowUpDown className="h-4 w-4" />
               </button>
             </div>
+            <div className="mb-3 grid grid-cols-2 gap-2 xl:grid-cols-4">
+              {[
+                { key: 'all', label: 'ทั้งหมด' },
+                { key: 'unplanned', label: 'ยังไม่วางแผน' },
+                { key: 'planned', label: 'วางแผนแล้ว' },
+                { key: 'complete', label: 'เสร็จแล้ว' },
+              ].map((filter) => (
+                <button
+                  key={filter.key}
+                  type="button"
+                  onClick={() => setJobListFilter(filter.key as JobListFilter)}
+                  className={`flex items-center justify-between rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${
+                    jobListFilter === filter.key
+                      ? 'border-slate-900 bg-slate-900 text-white'
+                      : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                  }`}
+                >
+                  <span>{filter.label}</span>
+                  <span className={`rounded-full px-2 py-0.5 text-[11px] ${
+                    jobListFilter === filter.key
+                      ? 'bg-white/20 text-white'
+                      : 'bg-slate-100 text-slate-600'
+                  }`}>
+                    {jobStatusCounts[filter.key as JobListFilter]}
+                  </span>
+                </button>
+              ))}
+            </div>
             <div className="max-h-[32rem] min-h-[482px] space-y-2 overflow-y-auto overflow-x-hidden pr-1">
               {filteredJobsList
-                .slice(0, 5)
                 .map((job) => {
                   const jobStepsForJob = getJobSteps(job.job_id);
                   const jobComplete = isJobComplete(job.id);
+                  const jobStatus = getJobPlanningStatus(job.id);
+                  const jobHasPlanning = hasJobPlanning(job.id);
 
                   return (
                     <div key={job.id}>
-                      <button
-                        onClick={() => setSelected(job)}
-                        className={`w-full rounded-lg border px-3 py-3 text-left hover:bg-slate-50 relative z-30 ${
-                          jobComplete ? 'bg-emerald-50 border-emerald-200' : ''
-                        }`}
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="flex items-center gap-2 min-w-0">
-                            <div className="min-w-0 truncate font-medium">{job.id}</div>
-                            {job.createdAt && <NewItemBadge dateValue={job.createdAt} />}
+                      <div className={`rounded-lg border ${jobComplete ? 'border-emerald-200 bg-emerald-50' : 'border-slate-200 bg-white'} overflow-hidden`}>
+                        <button
+                          onClick={() => setSelected(job)}
+                          className="w-full px-3 py-3 text-left hover:bg-slate-50/70 relative z-30"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <div className="min-w-0 truncate font-medium">{job.id}</div>
+                              {job.createdAt && <NewItemBadge dateValue={job.createdAt} />}
+                            </div>
+                            <span className={`text-xs rounded-full px-2 py-0.5 ${
+                              jobStatus === 'complete'
+                                ? 'bg-emerald-100 text-emerald-700'
+                                : jobStatus === 'planned'
+                                  ? 'bg-amber-100 text-amber-700'
+                                  : 'bg-slate-100 text-slate-600'
+                            }`}>
+                              {jobStatus === 'complete'
+                                ? '✓ Complete'
+                                : jobStatus === 'planned'
+                                  ? 'Planned'
+                                  : 'Unplanned'}
+                            </span>
                           </div>
-                          {jobComplete && <span className="text-emerald-600 text-xs">✓ Complete</span>}
-                        </div>
-                        <div className="truncate text-xs text-slate-500">
-                          {job.quantity} pcs • {job.customer_name}
-                        </div>
-                        <div className="truncate text-xs text-slate-400">
-                          Due {job.due}
-                        </div>
-                      </button>
+                          <div className="truncate text-xs text-slate-500">
+                            {job.quantity} pcs • {job.customer_name}
+                          </div>
+                          <div className="truncate text-xs text-slate-400">
+                            Due {job.due}
+                          </div>
+                        </button>
+                        {(!jobComplete || jobHasPlanning) && (
+                          <div className="border-t border-slate-200 px-3 py-2">
+                            <div className="flex gap-2">
+                              {!jobComplete && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleAutoPlanJob(job)}
+                                  disabled={!canEditPage || isAutoPlanLoading}
+                                  className="flex w-full items-center justify-center gap-2 rounded-md bg-slate-900 px-3 py-2 text-xs font-medium text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  <Sparkles className={`h-3.5 w-3.5 ${isAutoPlanLoading && activeAutoPlanLabel === job.id ? 'animate-spin' : ''}`} />
+                                  {isAutoPlanLoading && activeAutoPlanLabel === job.id ? 'Planning...' : 'Auto Plan Job'}
+                                </button>
+                              )}
+                              {jobHasPlanning && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleClearJobPlanning(job)}
+                                  disabled={!canEditPage}
+                                  className="flex w-full items-center justify-center rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700 transition-colors hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  Clear
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
                       {selected?.id === job.id && (
                         <div className="job-detail-popup">
                           <div className="job-detail-popup-scroll">
@@ -1023,24 +1409,38 @@ export default function Planning() {
 
                                 <div className="job-steps-grid">
                                   {jobStepsForJob
-                                    .filter((s) => calcRemainingStep(job.id, s.key) > 0)
-                                    .map((s) => (
-                                      <div
-                                        key={s.job_step_id}
-                                        draggable
-                                        onDragStart={(e) => {
-                                          e.dataTransfer.setData("text/step", s.key);
-                                          e.dataTransfer.setData("text/job", job.id);
-                                        }}
-                                        className="job-step-item"
-                                        style={{ backgroundColor: s.color }}
-                                      >
-                                        <div className="job-step-name">{s.key}</div>
-                                        <div className="job-step-remaining">
-                                          {calcRemainingStep(job.id, s.key)} remaining
+                                    .map((s) => {
+                                      const plannedQuantity = Math.min(calcPlannedStep(job.id, s.key), job.quantity);
+                                      const remainingQuantity = Math.max(0, job.quantity - plannedQuantity);
+                                      const stepComplete = plannedQuantity >= job.quantity;
+
+                                      return (
+                                        <div
+                                          key={s.job_step_id}
+                                          draggable={!stepComplete}
+                                          onDragStart={(e) => {
+                                            if (stepComplete) {
+                                              e.preventDefault();
+                                              return;
+                                            }
+                                            e.dataTransfer.setData("text/step", s.key);
+                                            e.dataTransfer.setData("text/job", job.id);
+                                          }}
+                                          className={cn("job-step-item", stepComplete && "is-complete")}
+                                          style={{ backgroundColor: s.color }}
+                                        >
+                                          <div className="job-step-name">{s.key}</div>
+                                          <div className={cn("job-step-progress", stepComplete && "is-complete")}>
+                                            {stepComplete ? '✓ ' : ''}{plannedQuantity}/{job.quantity} planned
+                                          </div>
+                                          {!stepComplete && (
+                                            <div className="job-step-remaining">
+                                              {remainingQuantity} remaining
+                                            </div>
+                                          )}
                                         </div>
-                                      </div>
-                                    ))}
+                                      );
+                                    })}
                                   {jobStepsForJob.length === 0 && (
                                     <div className="job-steps-complete">
                                       <div className="job-steps-complete-icon">⚠️</div>
@@ -1049,18 +1449,28 @@ export default function Planning() {
                                       </div>
                                     </div>
                                   )}
-                                  {jobStepsForJob.length > 0 && jobStepsForJob.every((s) => calcRemainingStep(job.id, s.key) === 0) && (
-                                    <div className="job-steps-complete">
-                                      <div className="job-steps-complete-icon">✅</div>
-                                      <div className="job-steps-complete-text">
-                                        All steps completed!
-                                      </div>
-                                    </div>
-                                  )}
                                 </div>
                               </div>
 
                               <div className="job-detail-actions">
+                                {!isJobComplete(job.id) && (
+                                  <button
+                                    className="job-detail-done-btn"
+                                    onClick={() => handleAutoPlanJob(job)}
+                                    disabled={!canEditPage || isAutoPlanLoading}
+                                  >
+                                    {isAutoPlanLoading && activeAutoPlanLabel === job.id ? 'Planning...' : 'Auto Plan Job'}
+                                  </button>
+                                )}
+                                {jobHasPlanning && (
+                                  <button
+                                    className="job-detail-done-btn"
+                                    onClick={() => handleClearJobPlanning(job)}
+                                    disabled={!canEditPage}
+                                  >
+                                    Clear Planning
+                                  </button>
+                                )}
                                 <button
                                   className="job-detail-done-btn"
                                   onClick={() => {
@@ -1080,15 +1490,15 @@ export default function Planning() {
                     </div>
                   );
                 })}
-              {filteredJobsList.length > 5 && (
-                <div className="text-xs text-slate-500 text-center py-2 px-3 bg-slate-50 rounded-lg">
-                  ...showing 5 of {filteredJobsList.length} jobs (use search to filter)
+              {filteredJobsList.length === 0 && (
+                <div className="rounded-lg border border-dashed border-slate-200 px-3 py-6 text-center text-sm text-slate-400">
+                  No jobs match the selected filter.
                 </div>
               )}
             </div>
           </div>
 
-          <div className="xl:col-span-3 min-w-0 max-w-full overflow-hidden rounded-lg border bg-white p-4">
+          <div className="xl:col-span-3 min-w-0 max-w-full overflow-hidden rounded-lg border bg-white p-4 xl:w-[1332px] xl:h-[694px]">
             <div className="mb-3 flex items-center justify-between">
               <div className="font-semibold">Planning Records</div>
               <button
@@ -1119,34 +1529,74 @@ export default function Planning() {
               >
                 <List className="h-4 w-4" />
               </button>
-              <button
-                onClick={() => setPlanningSortDescending(!planningSortDescending)}
-                className="flex items-center gap-1 px-3 py-2 rounded-lg border hover:bg-slate-50 transition-colors"
-                title="Sort by date"
-              >
-                <ArrowUpDown className="h-4 w-4" />
-              </button>
             </div>
-            <div className="max-w-full min-h-[550px] overflow-x-auto">
+            {selectedPlanningRecord && (
+              <div className="planning-records-locate-banner mb-3 rounded-lg border px-3 py-2 text-xs">
+                Locating {selectedPlanningRecord.jobStep?.job?.job_number} / {selectedPlanningRecord.jobStep?.step?.step_name} on {parseApiDate(selectedPlanningRecord.planned_date).toLocaleDateString('th-TH')}.
+                Move the pointer to the highlighted cell in the planning grid to clear this marker.
+              </div>
+            )}
+            <div className="max-w-full min-h-[530px] overflow-x-auto xl:h-[calc(626px-96px)] overflow-y-auto">
               <table className="min-w-[520px] w-full text-sm border">
                 <thead>
                   <tr className="bg-slate-100">
-                    <th className="px-2 py-1 border">Job ID</th>
-                    <th className="px-2 py-1 border">Step</th>
-                    <th className="px-2 py-1 border">Date</th>
-                    <th className="px-2 py-1 border">Quantity</th>
+                    <th className="border px-2 py-1">
+                      <button
+                        type="button"
+                        onClick={() => handlePlanningSort('job')}
+                        className="flex w-full items-center justify-between gap-2 text-left font-medium hover:text-slate-900"
+                      >
+                        <span>Job ID</span>
+                        <ArrowUpDown className={`h-4 w-4 ${planningSortField === 'job' ? 'text-slate-900' : 'text-slate-400'}`} />
+                      </button>
+                    </th>
+                    <th className="border px-2 py-1">
+                      <button
+                        type="button"
+                        onClick={() => handlePlanningSort('step')}
+                        className="flex w-full items-center justify-between gap-2 text-left font-medium hover:text-slate-900"
+                      >
+                        <span>Step</span>
+                        <ArrowUpDown className={`h-4 w-4 ${planningSortField === 'step' ? 'text-slate-900' : 'text-slate-400'}`} />
+                      </button>
+                    </th>
+                    <th className="border px-2 py-1">
+                      <button
+                        type="button"
+                        onClick={() => handlePlanningSort('date')}
+                        className="flex w-full items-center justify-between gap-2 text-left font-medium hover:text-slate-900"
+                      >
+                        <span>Date</span>
+                        <ArrowUpDown className={`h-4 w-4 ${planningSortField === 'date' ? 'text-slate-900' : 'text-slate-400'}`} />
+                      </button>
+                    </th>
+                    <th className="border px-2 py-1">
+                      <button
+                        type="button"
+                        onClick={() => handlePlanningSort('quantity')}
+                        className="flex w-full items-center justify-between gap-2 text-left font-medium hover:text-slate-900"
+                      >
+                        <span>Quantity</span>
+                        <ArrowUpDown className={`h-4 w-4 ${planningSortField === 'quantity' ? 'text-slate-900' : 'text-slate-400'}`} />
+                      </button>
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
-                  {plannings
-                    .filter(rec => rec.jobStep?.job && rec.jobStep?.step)
-                    .slice(0, 5)
+                  {filteredPlanningsList
                     .map((rec) => (
-                      <tr key={rec.planning_id}>
+                      <tr
+                        key={rec.planning_id}
+                        onClick={() => handleLocatePlanningRecord(rec)}
+                        className={cn(
+                          'planning-record-row cursor-pointer',
+                          locatingPlanningId === rec.planning_id && 'is-locating'
+                        )}
+                      >
                         <td className="px-2 py-1 border">{rec.jobStep!.job!.job_number}</td>
                         <td className="px-2 py-1 border">{rec.jobStep!.step!.step_name}</td>
                         <td className="px-2 py-1 border">
-                          {new Date(rec.planned_date).toLocaleDateString('th-TH')}
+                          {parseApiDate(rec.planned_date).toLocaleDateString('th-TH')}
                         </td>
                         <td className="px-2 py-1 border">{rec.planned_quantity}</td>
                       </tr>
@@ -1155,13 +1605,6 @@ export default function Planning() {
                     <tr>
                       <td colSpan={4} className="text-center text-slate-400 py-2">
                         No planning records found.
-                      </td>
-                    </tr>
-                  )}
-                  {filteredPlanningsList.length > 5 && (
-                    <tr>
-                      <td colSpan={4} className="text-center text-slate-500 text-xs py-2 bg-slate-50">
-                        ...showing 5 of {filteredPlanningsList.length} records (use search to filter)
                       </td>
                     </tr>
                   )}
@@ -1198,16 +1641,18 @@ export default function Planning() {
                 {/* Progress Counter */}
                 <div className="pt-2">
                   <p className="text-2xl font-bold text-violet-600">
-                    {autoPlanTotalCount}
+                    {autoPlanTotalCount > 1 ? autoPlanTotalCount : activeAutoPlanLabel || autoPlanTotalCount}
                   </p>
                   <p className="text-xs text-slate-500 mt-1">
-                    Jobs in one AI request
+                    {autoPlanTotalCount > 1 ? 'Jobs in one AI request' : 'Job being planned'}
                   </p>
                 </div>
 
                 {/* Helper Text */}
                 <p className="text-xs text-slate-500 pt-2 leading-relaxed">
-                  AI is calculating all selected jobs in one request. Please don't close this window.
+                  {autoPlanTotalCount > 1
+                    ? "AI is calculating all selected jobs in one request. Please don't close this window."
+                    : "AI is calculating the selected job. Please don't close this window."}
                 </p>
               </div>
 
@@ -1232,6 +1677,57 @@ export default function Planning() {
             }
           }
         `}</style>
+
+        <Dialog
+          open={autoPlanFeedback.open}
+          onOpenChange={(open) => setAutoPlanFeedback((current) => ({ ...current, open }))}
+        >
+          <DialogContent className="auto-plan-feedback-dialog border-0 p-0 overflow-hidden sm:max-w-2xl">
+            <div
+              className={cn(
+                'auto-plan-feedback-header',
+                autoPlanFeedback.tone === 'success' && 'is-success',
+                autoPlanFeedback.tone === 'error' && 'is-error',
+                autoPlanFeedback.tone === 'info' && 'is-info'
+              )}
+            >
+              <div className="auto-plan-feedback-icon-wrap">
+                {autoPlanFeedback.tone === 'success' && <CheckCircle2 className="h-6 w-6" />}
+                {autoPlanFeedback.tone === 'error' && <AlertTriangle className="h-6 w-6" />}
+                {autoPlanFeedback.tone === 'info' && <Info className="h-6 w-6" />}
+              </div>
+              <DialogHeader className="space-y-1 text-left">
+                <DialogTitle className="auto-plan-feedback-title">{autoPlanFeedback.title}</DialogTitle>
+                <DialogDescription className="auto-plan-feedback-description">
+                  {autoPlanFeedback.message}
+                </DialogDescription>
+              </DialogHeader>
+            </div>
+
+            {autoPlanFeedback.details.length > 0 && (
+              <div className="auto-plan-feedback-body">
+                <div className="auto-plan-feedback-body-label">Details</div>
+                <div className="auto-plan-feedback-list">
+                  {autoPlanFeedback.details.map((detail, index) => (
+                    <div key={`${detail}-${index}`} className="auto-plan-feedback-item">
+                      {detail}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="auto-plan-feedback-actions">
+              <Button
+                type="button"
+                onClick={() => setAutoPlanFeedback((current) => ({ ...current, open: false }))}
+                className="auto-plan-feedback-button"
+              >
+                Close
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
       </div>
     </AppLayout>
   );

@@ -5,13 +5,207 @@ import {
   BatchPlanningPair,
   generateAutoPlan,
   generateBatchAutoPlan,
-  JobStepWithCapacity,
   JobStepWithRemaining,
   PlanningPair,
 } from "../services/geminiPlanning";
 
 const router = Router();
 const prisma = new PrismaClient();
+
+function formatLocalDate(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function parseLocalDate(dateString: string): Date {
+  const [year, month, day] = dateString.split("-").map(Number);
+  return new Date(year, month - 1, day);
+}
+
+function endOfLocalDate(dateString: string): Date {
+  const [year, month, day] = dateString.split("-").map(Number);
+  return new Date(year, month - 1, day, 23, 59, 59, 999);
+}
+
+async function getExistingStepMinutesByDate(
+  stepIds: number[],
+  startDate: string,
+  endDate: string
+): Promise<Record<string, number>> {
+  if (!stepIds.length) {
+    return {};
+  }
+
+  const plannings = await prisma.planning.findMany({
+    where: {
+      planned_date: {
+        gte: parseLocalDate(startDate),
+        lte: endOfLocalDate(endDate),
+      },
+      jobStep: {
+        step_id: { in: stepIds },
+      },
+    },
+    select: {
+      planned_date: true,
+      planned_quantity: true,
+      jobStep: {
+        select: {
+          step_id: true,
+          minutes_per_unit: true,
+        },
+      },
+    },
+  });
+
+  return plannings.reduce<Record<string, number>>((usageMap, planning) => {
+    if (!planning.jobStep.minutes_per_unit || planning.jobStep.minutes_per_unit <= 0) {
+      return usageMap;
+    }
+
+    const dateKey = formatLocalDate(planning.planned_date);
+    const usageKey = `${planning.jobStep.step_id}:${dateKey}`;
+    usageMap[usageKey] =
+      (usageMap[usageKey] || 0) +
+      planning.planned_quantity * planning.jobStep.minutes_per_unit;
+    return usageMap;
+  }, {});
+}
+
+function buildGeminiErrorResponse(error: any) {
+  const message = error?.message || "An error occurred while generating the plan";
+
+  if (message.includes("GEMINI_API_KEY") || message.includes("GROQ_API_KEY")) {
+    return {
+      status: 500,
+      body: {
+        success: false,
+        message: "AI provider API key not configured",
+      },
+    };
+  }
+
+  if (message.includes("AI_PROVIDER")) {
+    return {
+      status: 500,
+      body: {
+        success: false,
+        message: "AI provider configuration is invalid. Use AI_PROVIDER=gemini or AI_PROVIDER=groq.",
+      },
+    };
+  }
+
+  if (message.includes("reported as leaked")) {
+    return {
+      status: 500,
+      body: {
+        success: false,
+        message: "Gemini API key was reported as leaked. Please create a new API key and update the backend environment.",
+      },
+    };
+  }
+
+  if (message.includes("API_KEY_INVALID") || message.includes("API key expired")) {
+    return {
+      status: 500,
+      body: {
+        success: false,
+        message: "Gemini API key expired or invalid. Please create a new API key and update Backend/.env.",
+      },
+    };
+  }
+
+  if (message.includes("Groq API Error: 401") || message.toLowerCase().includes("invalid_api_key")) {
+    return {
+      status: 500,
+      body: {
+        success: false,
+        message: "Groq API key is invalid. Please create a new API key and update Backend/.env.",
+      },
+    };
+  }
+
+  if (
+    message.includes("Gemini API quota exhausted") ||
+    message.includes("Groq API quota exhausted") ||
+    message.includes("GenerateRequestsPerDayPerProjectPerModel-FreeTier") ||
+    message.includes("limit: 0") ||
+    message.toLowerCase().includes("insufficient_quota")
+  ) {
+    return {
+      status: 429,
+      body: {
+        success: false,
+        message: "AI provider quota is exhausted for this project. Add billing, switch to another project/key with quota, or wait for quota reset before trying again.",
+      },
+    };
+  }
+
+  if (
+    message.includes("Gemini API Rate Limited") ||
+    message.includes("Groq API Rate Limited") ||
+    message.includes("RESOURCE_EXHAUSTED") ||
+    message.toLowerCase().includes("rate_limit_exceeded")
+  ) {
+    return {
+      status: 429,
+      body: {
+        success: false,
+        message: "AI provider is temporarily rate limited. Please try again later.",
+      },
+    };
+  }
+
+  if (message.includes("PERMISSION_DENIED") || message.includes("Gemini API Error: 403")) {
+    return {
+      status: 500,
+      body: {
+        success: false,
+        message: "Gemini API permission denied. Please verify the API key and project settings.",
+      },
+    };
+  }
+
+  if (message.includes("Failed to parse Gemini response") || message.includes("Failed to parse AI response")) {
+    return {
+      status: 500,
+      body: {
+        success: false,
+        message: "AI response parsing error - please check step configuration",
+      },
+    };
+  }
+
+  if (message.includes("Unable to create a complete plan")) {
+    return {
+      status: 400,
+      body: {
+        success: false,
+        message,
+      },
+    };
+  }
+
+  if (message.includes("Invalid Groq API response structure") || message.includes("Invalid Gemini API response structure")) {
+    return {
+      status: 500,
+      body: {
+        success: false,
+        message: "AI provider returned an invalid response structure.",
+      },
+    };
+  }
+
+  return {
+    status: 500,
+    body: {
+      success: false,
+      message,
+    },
+  };
+}
 
 type PlanningCreateItem = {
   job_id: number;
@@ -136,25 +330,54 @@ router.post("/auto-plan", async (req: Request, res: Response) => {
       });
     }
 
-    // Prepare job step data for Gemini planning
-    const jobStepsWithCapacity: JobStepWithCapacity[] = jobSteps.map((js) => ({
-      job_step_id: js.job_step_id,
-      step_id: js.step_id,
-      step_name: js.step.step_name,
-      minutes_per_unit: js.minutes_per_unit || 0,
-      standard_time: js.step.standard_time,
-    }));
+    const dueDateString = formatLocalDate(job.end_date);
+    const todayString = formatLocalDate(new Date());
+    const stepIds = [...new Set(jobSteps.map((jobStep) => jobStep.step_id))];
 
-    // Convert due date to YYYY-MM-DD format
-    const dueDateString = job.end_date.toISOString().split("T")[0];
+    const [existingJobPlannings, existingStepMinutesByDate] = await Promise.all([
+      prisma.planning.findMany({
+        where: { job_id },
+        select: {
+          job_step_id: true,
+          planned_quantity: true,
+        },
+      }),
+      getExistingStepMinutesByDate(stepIds, todayString, dueDateString),
+    ]);
+
+    const plannedQuantityByJobStep = new Map<number, number>();
+    for (const planning of existingJobPlannings) {
+      plannedQuantityByJobStep.set(
+        planning.job_step_id,
+        (plannedQuantityByJobStep.get(planning.job_step_id) || 0) + planning.planned_quantity
+      );
+    }
+
+    const jobStepsWithRemaining: JobStepWithRemaining[] = jobSteps
+      .map((js) => ({
+        job_step_id: js.job_step_id,
+        step_id: js.step_id,
+        step_name: js.step.step_name,
+        minutes_per_unit: js.minutes_per_unit || 0,
+        standard_time: js.step.standard_time,
+        remaining_quantity: Math.max(0, job.total_quantity - (plannedQuantityByJobStep.get(js.job_step_id) || 0)),
+      }))
+      .filter((jobStep) => jobStep.remaining_quantity > 0);
+
+    if (jobStepsWithRemaining.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: `${job.job_number} is already fully planned`,
+      });
+    }
 
     // Call Gemini planning service
     console.log("\n[AUTO-PLAN API] Calling generateAutoPlan service...");
     const planningPairs = await generateAutoPlan(
       job.job_number,
-      job.total_quantity,
       dueDateString,
-      jobStepsWithCapacity
+      jobStepsWithRemaining,
+      existingStepMinutesByDate
     );
     console.log(`[AUTO-PLAN API] Service returned ${planningPairs.length} planning pairs\n`);
 
@@ -187,26 +410,8 @@ router.post("/auto-plan", async (req: Request, res: Response) => {
   } catch (error: any) {
     console.error("[AUTO-PLAN API] ERROR:", error.message);
     console.error("\nFull Error Details:\n", error);
-
-    // Handle Gemini API errors
-    if (error.message.includes("GEMINI_API_KEY")) {
-      return res.status(500).json({
-        success: false,
-        message: "Gemini API key not configured",
-      });
-    }
-
-    if (error.message.includes("Failed to parse Gemini response")) {
-      return res.status(500).json({
-        success: false,
-        message: "AI response parsing error - please check step configuration",
-      });
-    }
-
-    return res.status(500).json({
-      success: false,
-      message: error.message || "An error occurred while generating the plan",
-    });
+    const errorResponse = buildGeminiErrorResponse(error);
+    return res.status(errorResponse.status).json(errorResponse.body);
   }
 });
 
@@ -222,6 +427,7 @@ router.post("/auto-plan-batch", async (req: Request, res: Response) => {
     }
 
     const uniqueJobIds = [...new Set(job_ids)];
+    const todayString = formatLocalDate(new Date());
 
     const [jobs, jobSteps, existingPlannings] = await Promise.all([
       prisma.job.findMany({
@@ -250,6 +456,13 @@ router.post("/auto-plan-batch", async (req: Request, res: Response) => {
         message: `Jobs not found: ${missingJobIds.join(", ")}`,
       });
     }
+
+    const stepIds = [...new Set(jobSteps.map((jobStep) => jobStep.step_id))];
+    const maxDueDate = jobs.reduce((latest, job) => {
+      const jobDate = formatLocalDate(job.end_date);
+      return jobDate > latest ? jobDate : latest;
+    }, todayString);
+    const existingStepMinutesByDate = await getExistingStepMinutesByDate(stepIds, todayString, maxDueDate);
 
     const plannedQuantityByStep = new Map<string, number>();
     for (const planning of existingPlannings) {
@@ -320,8 +533,15 @@ router.post("/auto-plan-batch", async (req: Request, res: Response) => {
       });
     }
 
+    batchJobs.sort((left, right) => {
+      if (left.due_date !== right.due_date) {
+        return left.due_date.localeCompare(right.due_date);
+      }
+      return left.job_number.localeCompare(right.job_number);
+    });
+
     console.log(`\n[AUTO-PLAN BATCH API] Calling generateBatchAutoPlan service for ${batchJobs.length} jobs...`);
-    const planningPairs = await generateBatchAutoPlan(batchJobs);
+    const planningPairs = await generateBatchAutoPlan(batchJobs, existingStepMinutesByDate);
     console.log(`[AUTO-PLAN BATCH API] Service returned ${planningPairs.length} planning pairs\n`);
 
     const jobsWithPlans = new Set(planningPairs.map((pair) => pair.job_id));
@@ -365,25 +585,8 @@ router.post("/auto-plan-batch", async (req: Request, res: Response) => {
   } catch (error: any) {
     console.error("[AUTO-PLAN BATCH API] ERROR:", error.message);
     console.error("\nFull Error Details:\n", error);
-
-    if (error.message.includes("GEMINI_API_KEY")) {
-      return res.status(500).json({
-        success: false,
-        message: "Gemini API key not configured",
-      });
-    }
-
-    if (error.message.includes("Failed to parse Gemini response")) {
-      return res.status(500).json({
-        success: false,
-        message: "AI response parsing error - please check step configuration",
-      });
-    }
-
-    return res.status(500).json({
-      success: false,
-      message: error.message || "An error occurred while generating the batch plan",
-    });
+    const errorResponse = buildGeminiErrorResponse(error);
+    return res.status(errorResponse.status).json(errorResponse.body);
   }
 });
 

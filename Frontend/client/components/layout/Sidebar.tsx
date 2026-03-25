@@ -1,4 +1,4 @@
-import { ReactNode, useState, useEffect } from "react";
+import { ReactNode, useState } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { Home, Users, Briefcase, Calendar as CalIcon, PlusSquare, ShieldCheck, LogOut, BarChart3, Settings, Truck } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -35,10 +35,10 @@ export default function Sidebar({ children }: AppLayoutProps) {
 
   return (
     <div className="min-h-screen bg-muted/30">
-      <div className="flex">
+      <div className="flex min-h-screen relative isolate">
         <aside 
           className={cn(
-            "hidden md:flex min-h-screen bg-white border-r transition-all duration-300",
+            "sidebar-docked hidden md:flex h-screen sticky top-0 self-start bg-white border-r transition-all duration-300 overflow-hidden",
             isCollapsed ? "w-16" : "w-64"
           )}
           onMouseEnter={() => setIsCollapsed(false)}
@@ -93,9 +93,9 @@ export default function Sidebar({ children }: AppLayoutProps) {
           </div>
         </aside>
 
-        <div className="flex-1 flex flex-col min-h-screen">
+        <div className="flex-1 flex flex-col min-h-screen min-w-0 relative z-0 isolate">
           <Navbar />
-          <main className="p-6 app-main">{children}</main>
+          <main className="p-6 app-main relative z-0">{children}</main>
         </div>
       </div>
     </div>

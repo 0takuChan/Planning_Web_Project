@@ -14,6 +14,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Truck, Edit2, Trash2, X } from "lucide-react";
+import { apiFetch } from "@/lib/api";
 
 const API_BASE_URL = "http://localhost:4000/api";
 
@@ -112,7 +113,7 @@ export default function TransportationDetail() {
         setLoading(true);
         setErrorMessage(null);
 
-        const shipmentRes = await fetch(`${API_BASE_URL}/shipments/${shipmentId}`);
+        const shipmentRes = await apiFetch(`${API_BASE_URL}/shipments/${shipmentId}`);
 
         if (!shipmentRes.ok) {
           throw new Error("Shipment not found");
@@ -121,8 +122,8 @@ export default function TransportationDetail() {
         const shipmentData = await shipmentRes.json();
 
         const [customerRes, customerJobsRes] = await Promise.all([
-          fetch(`${API_BASE_URL}/customers/${shipmentData.customer_id}`),
-          fetch(`${API_BASE_URL}/customers/${shipmentData.customer_id}/jobs`),
+          apiFetch(`${API_BASE_URL}/customers/${shipmentData.customer_id}`),
+          apiFetch(`${API_BASE_URL}/customers/${shipmentData.customer_id}/jobs`),
         ]);
 
         const customerData = customerRes.ok ? await customerRes.json() : null;
@@ -165,7 +166,7 @@ export default function TransportationDetail() {
     if (shipment?.job_id) {
       const fetchJobSteps = async () => {
         try {
-          const response = await fetch(`${API_BASE_URL}/jobsteps`);
+          const response = await apiFetch(`${API_BASE_URL}/jobsteps`);
           if (response.ok) {
             const allSteps = await response.json();
             const filteredSteps = allSteps
@@ -218,7 +219,7 @@ export default function TransportationDetail() {
       setIsSubmitting(true);
       setErrorMessage(null);
 
-      const response = await fetch(`${API_BASE_URL}/shipments/${shipment.shipment_id}`, {
+      const response = await apiFetch(`${API_BASE_URL}/shipments/${shipment.shipment_id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -271,7 +272,7 @@ export default function TransportationDetail() {
       setIsSubmitting(true);
       setErrorMessage(null);
 
-      const response = await fetch(`${API_BASE_URL}/shipments/${shipment.shipment_id}`, {
+      const response = await apiFetch(`${API_BASE_URL}/shipments/${shipment.shipment_id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -303,7 +304,7 @@ export default function TransportationDetail() {
       setIsSubmitting(true);
       setErrorMessage(null);
 
-      const response = await fetch(`${API_BASE_URL}/shipments/${shipment.shipment_id}`, {
+      const response = await apiFetch(`${API_BASE_URL}/shipments/${shipment.shipment_id}`, {
         method: "DELETE",
       });
 

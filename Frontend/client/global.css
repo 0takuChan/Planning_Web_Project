@@ -104,3 +104,49 @@
     @apply bg-background text-foreground;
   }
 }
+
+@layer components {
+  .page-transition-shell {
+    position: relative;
+    width: 100%;
+    isolation: isolate;
+  }
+
+  .page-transition-glow {
+    position: absolute;
+    top: 1.25rem;
+    left: 50%;
+    z-index: -1;
+    width: min(72vw, 64rem);
+    height: 18rem;
+    transform: translateX(-50%);
+    border-radius: 9999px;
+    background:
+      radial-gradient(circle at 30% 50%, hsl(var(--brand-start) / 0.2), transparent 58%),
+      radial-gradient(circle at 70% 45%, hsl(var(--brand-end) / 0.24), transparent 62%);
+    filter: blur(28px);
+    pointer-events: none;
+  }
+
+  .page-transition-content {
+    position: relative;
+    z-index: 1;
+    width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .page-transition-glow {
+    animation: page-aura-drift 8s ease-in-out infinite alternate;
+  }
+}
+
+@keyframes page-aura-drift {
+  from {
+    transform: translateX(-50%) translateY(0) scale(1);
+  }
+
+  to {
+    transform: translateX(-50%) translateY(-10px) scale(1.04);
+  }
+}

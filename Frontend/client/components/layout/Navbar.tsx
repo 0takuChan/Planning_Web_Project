@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { User, LogOut, Settings, ChevronDown, UserCircle, ShieldCheck, Calendar as CalIcon, ClipboardList, Package, Key } from "lucide-react";
+import { apiFetch } from "@/lib/api";
 import { logout } from "@/lib/auth";
 import { toast } from "@/hooks/use-toast";
 
@@ -122,7 +123,7 @@ export default function Navbar() {
 
     try {
       // ขั้นแรก: ตรวจสอบรหัสผ่านปัจจุบันโดยพยายาม login
-      const loginResponse = await fetch("http://localhost:4000/api/login", {
+      const loginResponse = await apiFetch("http://localhost:4000/api/login", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -138,7 +139,7 @@ export default function Navbar() {
       }
 
       // ขั้นที่สอง: อัพเดทรหัสผ่านใหม่
-      const updateResponse = await fetch(`http://localhost:4000/api/employee/${userId}`, {
+      const updateResponse = await apiFetch(`http://localhost:4000/api/employee/${userId}`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
@@ -205,7 +206,7 @@ export default function Navbar() {
 
   return (
     <>
-      <header className="h-14 border-b bg-white flex items-center justify-between px-4">
+      <header className="sticky top-0 z-40 h-14 border-b border-slate-200/80 bg-white/90 backdrop-blur supports-[backdrop-filter]:bg-white/75 flex items-center justify-between px-4">
         <div className="flex items-center gap-2 text-sm text-slate-500">
           <RoleIcon className="h-4 w-4" />
           <span>Role: {getRoleDisplayName(userRole)}</span>

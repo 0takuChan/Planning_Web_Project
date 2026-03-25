@@ -15,6 +15,7 @@ import shipmentRoutes from "./routes/shipment";
 import transportTypeRoutes from "./routes/transportType";
 import shipmentStatusRoutes from "./routes/shipmentStatus";
 import aiPlanningRoutes from "./routes/aiPlanning";
+import { authMiddleware } from "./middleware/authMiddleware";
 import { updateAllShipmentStatuses } from "./utils/updateShipmentStatus";
 
 dotenv.config();
@@ -29,6 +30,7 @@ app.use(express.json());
 
 // ใช้ prefix /api
 app.use("/api", authRoutes);
+app.use("/api", authMiddleware);
 app.use("/api/employee", employeeRoutes);
 app.use("/api/customers", customerRoutes);
 app.use("/api/jobs", jobRoutes);

@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { usePermissions } from "@/App";
 import { toast } from "@/hooks/use-toast";
+import { apiFetch } from "@/lib/api";
 import { Trash2 } from "lucide-react";
 
 interface Customer {
@@ -89,7 +90,7 @@ export default function Customers() {
   const fetchCustomers = async () => {
     setLoading(true);
     try {
-      const response = await fetch("http://localhost:4000/api/customers");
+      const response = await apiFetch("http://localhost:4000/api/customers");
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const data = await response.json();
       
@@ -144,7 +145,7 @@ export default function Customers() {
         address_detail: draft.location.trim()
       };
 
-      const response = await fetch("http://localhost:4000/api/customers", {
+      const response = await apiFetch("http://localhost:4000/api/customers", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -217,7 +218,7 @@ export default function Customers() {
     }
     
     try {
-      const response = await fetch(`http://localhost:4000/api/customers/${editDraft.id}`, {
+      const response = await apiFetch(`http://localhost:4000/api/customers/${editDraft.id}`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
@@ -276,7 +277,7 @@ export default function Customers() {
     if (!customerToDelete) return;
 
     try {
-      const response = await fetch(`http://localhost:4000/api/customers/${customerToDelete.id}`, {
+      const response = await apiFetch(`http://localhost:4000/api/customers/${customerToDelete.id}`, {
         method: "DELETE",
       });
 

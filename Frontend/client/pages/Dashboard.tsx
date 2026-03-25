@@ -23,6 +23,7 @@ import {
   Calendar as Cal,
   Star,
 } from "lucide-react";
+import { apiFetch } from "@/lib/api";
 import "@/styles/dashboard.css";
 
 interface Step {
@@ -358,11 +359,11 @@ export default function Dashboard() {
         
         // Fetch all data in parallel
         const [jobsResponse, stepsResponse, jobStepsResponse, productionLogsResponse, shipmentsResponse] = await Promise.all([
-          fetch("http://localhost:4000/api/jobs"),
-          fetch("http://localhost:4000/api/steps"),
-          fetch("http://localhost:4000/api/jobsteps"),
-          fetch("http://localhost:4000/api/productionlogs"),
-          fetch("http://localhost:4000/api/shipments")
+          apiFetch("http://localhost:4000/api/jobs"),
+          apiFetch("http://localhost:4000/api/steps"),
+          apiFetch("http://localhost:4000/api/jobsteps"),
+          apiFetch("http://localhost:4000/api/productionlogs"),
+          apiFetch("http://localhost:4000/api/shipments")
         ]);
 
         // Check responses

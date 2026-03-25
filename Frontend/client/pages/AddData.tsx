@@ -23,6 +23,7 @@ import {
 import { LayoutGrid, Trash2, List, ArrowUpDown, Search } from "lucide-react";
 import { usePermissions } from "@/App";
 import NewItemBadge from "@/components/common/NewItemBadge";
+import { apiFetch } from "@/lib/api";
 
 // Interfaces สำหรับ API data
 interface Job {
@@ -308,10 +309,10 @@ export default function AddData() {
       
       try {
         const [jobsRes, jobStepsRes, productionLogsRes, employeesRes] = await Promise.all([
-          fetch("http://localhost:4000/api/jobs"),
-          fetch("http://localhost:4000/api/jobsteps"),
-          fetch("http://localhost:4000/api/productionlogs"),
-          fetch("http://localhost:4000/api/employee")
+          apiFetch("http://localhost:4000/api/jobs"),
+          apiFetch("http://localhost:4000/api/jobsteps"),
+          apiFetch("http://localhost:4000/api/productionlogs"),
+          apiFetch("http://localhost:4000/api/employee")
         ]);
 
         if (!jobsRes.ok) throw new Error(`Jobs API: ${jobsRes.status}`);
@@ -431,7 +432,7 @@ export default function AddData() {
 
       console.log("Creating production log:", payload);
 
-      const response = await fetch("http://localhost:4000/api/productionlogs", {
+      const response = await apiFetch("http://localhost:4000/api/productionlogs", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -495,7 +496,7 @@ export default function AddData() {
 
       console.log("Updating production log:", payload);
 
-      const response = await fetch(`http://localhost:4000/api/productionlogs/${logId}`, {
+      const response = await apiFetch(`http://localhost:4000/api/productionlogs/${logId}`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
@@ -526,7 +527,7 @@ export default function AddData() {
     try {
       const logId = productionLogs[editIdx].log_id;
 
-      const response = await fetch(`http://localhost:4000/api/productionlogs/${logId}`, {
+      const response = await apiFetch(`http://localhost:4000/api/productionlogs/${logId}`, {
         method: "DELETE",
       });
 

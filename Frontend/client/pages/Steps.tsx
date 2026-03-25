@@ -34,6 +34,7 @@ import {
 import { Plus, Pencil, Trash2, Settings } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { usePermissions } from "@/App";
+import { apiFetch } from "@/lib/api";
 
 interface Step {
   step_id: number;
@@ -66,7 +67,7 @@ export default function Steps() {
     try {
       setLoading(true);
       // ใช้ port 4000 ตาม backend
-      const response = await fetch('http://localhost:4000/api/steps');
+      const response = await apiFetch('http://localhost:4000/api/steps');
       
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
@@ -109,7 +110,7 @@ export default function Steps() {
 
     try {
       setIsSubmitting(true);
-      const response = await fetch('http://localhost:4000/api/steps', {
+      const response = await apiFetch('http://localhost:4000/api/steps', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -168,7 +169,7 @@ export default function Steps() {
 
     try {
       setIsSubmitting(true);
-      const response = await fetch(`http://localhost:4000/api/steps/${editingStep.step_id}`, {
+      const response = await apiFetch(`http://localhost:4000/api/steps/${editingStep.step_id}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -210,7 +211,7 @@ export default function Steps() {
 
   const handleDeleteStep = async (step: Step) => {
     try {
-      const response = await fetch(`http://localhost:4000/api/steps/${step.step_id}`, {
+      const response = await apiFetch(`http://localhost:4000/api/steps/${step.step_id}`, {
         method: 'DELETE',
       });
 

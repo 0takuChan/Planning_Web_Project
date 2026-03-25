@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect } from "react";
 import AppLayout from "@/components/layout/Sidebar";
 import { format, parseISO, isWithinInterval, isSameDay, addDays, subDays } from "date-fns";
 import { Button } from "@/components/ui/button";
+import { apiFetch } from "@/lib/api";
 import {
   Users,
   Calendar,
@@ -107,9 +108,9 @@ export default function Summary() {
       try {
         setLoading(true);
         const [jobsRes, jobStepsRes, logsRes] = await Promise.all([
-          fetch(`${API_BASE_URL}/jobs`),
-          fetch(`${API_BASE_URL}/jobsteps`),
-          fetch(`${API_BASE_URL}/productionlogs`),
+          apiFetch(`${API_BASE_URL}/jobs`),
+          apiFetch(`${API_BASE_URL}/jobsteps`),
+          apiFetch(`${API_BASE_URL}/productionlogs`),
         ]);
 
         const jobsData: Job[] = await jobsRes.json();

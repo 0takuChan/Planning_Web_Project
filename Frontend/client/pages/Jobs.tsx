@@ -31,6 +31,7 @@ import * as Popover from "@radix-ui/react-popover";
 import { usePermissions } from "@/App";
 import { toast } from "@/hooks/use-toast";
 import NewItemBadge from "@/components/common/NewItemBadge";
+import { apiFetch } from "@/lib/api";
 
 // Interface สำหรับข้อมูล Step จาก API
 interface Step {
@@ -193,10 +194,10 @@ export default function Jobs() {
       try {
         // Fetch ข้อมูลทั้งหมดแบบ parallel
         const [customersRes, stepsRes, jobsRes, jobStepsRes] = await Promise.all([
-          fetch("http://localhost:4000/api/customers"),
-          fetch("http://localhost:4000/api/steps"),
-          fetch("http://localhost:4000/api/jobs"),
-          fetch("http://localhost:4000/api/jobsteps")
+          apiFetch("http://localhost:4000/api/customers"),
+          apiFetch("http://localhost:4000/api/steps"),
+          apiFetch("http://localhost:4000/api/jobs"),
+          apiFetch("http://localhost:4000/api/jobsteps")
         ]);
 
         // ตรวจสอบ response status
@@ -265,7 +266,7 @@ export default function Jobs() {
 
       try {
         const usagePromises = editDraft.selectedSteps.map(async (stepId) => {
-          const response = await fetch(`http://localhost:4000/api/steps/${stepId}/usage`);
+          const response = await apiFetch(`http://localhost:4000/api/steps/${stepId}/usage`);
           if (response.ok) {
             const data = await response.json();
             return { stepId, usage: data.usage.filter((u: StepUsage) => u.job_id === jobId) };
@@ -383,7 +384,7 @@ export default function Jobs() {
 
       console.log("Creating job with payload:", payload);
 
-      const response = await fetch("http://localhost:4000/api/jobs", {
+      const response = await apiFetch("http://localhost:4000/api/jobs", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -402,7 +403,7 @@ export default function Jobs() {
       
       // สร้าง JobStep สำหรับ steps ที่เลือก
       const jobStepPromises = draft.selectedSteps.map(stepId =>
-        fetch("http://localhost:4000/api/jobsteps", {
+        apiFetch("http://localhost:4000/api/jobsteps", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -503,7 +504,7 @@ export default function Jobs() {
 
       console.log("Updating job with payload:", payload);
 
-      const response = await fetch(`http://localhost:4000/api/jobs/${jobId}`, {
+      const response = await apiFetch(`http://localhost:4000/api/jobs/${jobId}`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
@@ -523,14 +524,14 @@ export default function Jobs() {
       // อัปเดต JobSteps
       // ลบ JobSteps เก่าทั้งหมดก่อน
       try {
-        const existingJobStepsRes = await fetch("http://localhost:4000/api/jobsteps");
+        const existingJobStepsRes = await apiFetch("http://localhost:4000/api/jobsteps");
         if (existingJobStepsRes.ok) {
           const allJobSteps = await existingJobStepsRes.json();
           const jobStepsToDelete = allJobSteps.filter((js: any) => js.job_id === jobId);
           
           // ลบ JobSteps เก่า - แต่ต้องจัดการ error กรณีที่มี production logs
           const deletePromises = jobStepsToDelete.map(async (js: any) => {
-            const deleteResponse = await fetch(`http://localhost:4000/api/jobsteps/${js.job_step_id}`, {
+            const deleteResponse = await apiFetch(`http://localhost:4000/api/jobsteps/${js.job_step_id}`, {
               method: "DELETE"
             });
             
@@ -548,7 +549,7 @@ export default function Jobs() {
           // สร้าง JobSteps ใหม่
           await Promise.all(
             editDraft.selectedSteps.map(stepId =>
-              fetch("http://localhost:4000/api/jobsteps", {
+              apiFetch("http://localhost:4000/api/jobsteps", {
                 method: "POST",
                 headers: {
                   "Content-Type": "application/json",
@@ -604,7 +605,7 @@ export default function Jobs() {
       const jobId = jobs[editIndex].id;
       if (!jobId) return;
 
-      const response = await fetch(`http://localhost:4000/api/jobs/${jobId}`, {
+      const response = await apiFetch(`http://localhost:4000/api/jobs/${jobId}`, {
         method: "DELETE",
       });
 
@@ -723,7 +724,7 @@ export default function Jobs() {
         // ตรวจสอบว่า step นี้มีการใช้งานใน production log หรือไม่
         try {
           const jobId = jobs[editIndex!].id;
-          const usageResponse = await fetch(`http://localhost:4000/api/steps/${stepId}/usage`);
+          const usageResponse = await apiFetch(`http://localhost:4000/api/steps/${stepId}/usage`);
           
           if (usageResponse.ok) {
             const usageData = await usageResponse.json();

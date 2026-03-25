@@ -239,6 +239,11 @@
   min-height: 100vh;
 }
 
+.sidebar-docked {
+  z-index: 40;
+  box-shadow: 0 18px 40px -28px rgba(15, 23, 42, 0.35);
+}
+
 /* Smooth icon rotation on hover */
 .sidebar-nav-link:hover .sidebar-nav-icon {
   animation: iconPulse 0.5s ease-in-out;

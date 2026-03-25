@@ -7,6 +7,7 @@ import { AddMemberDialog } from "@/components/Admin/AddMemberDialog";
 import { EditMemberDialog } from "@/components/Admin/EditMemberDialog";
 import { DeleteConfirmDialog } from "@/components/Admin/DeleteConfirmDialog";
 import { getCurrentUserRole } from "@/lib/auth";
+import { apiFetch } from "@/lib/api";
 import { validateEmail, validatePhone, validatePassword, validateUsername } from "@/lib/validation";
 
 interface Member {
@@ -246,7 +247,7 @@ export default function Admin() {
     }
 
     try {
-      const response = await fetch(`http://localhost:4000/api/employee/${current.id}`);
+      const response = await apiFetch(`http://localhost:4000/api/employee/${current.id}`);
       if (!response.ok) {
         throw new Error("Failed to fetch employee details");
       }
@@ -292,14 +293,14 @@ export default function Admin() {
 
     if (current.id > 0) {
       try {
-        const res = await fetch(`http://localhost:4000/api/employee/${current.id}`, {
+        const res = await apiFetch(`http://localhost:4000/api/employee/${current.id}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(updateData),
         });
         if (!res.ok) throw new Error("Failed updating member");
 
-        const empRes = await fetch("http://localhost:4000/api/employee");
+        const empRes = await apiFetch("http://localhost:4000/api/employee");
         if (!empRes.ok) throw new Error("Failed fetching employees");
         const empData = await empRes.json();
 
@@ -384,7 +385,7 @@ export default function Admin() {
     try {
       // ลบ members ที่ถูกทำเครื่องหมายเพื่อลบ
       for (const id of deletedIds) {
-        const res = await fetch(`http://localhost:4000/api/employee/${id}`, { method: "DELETE" });
+        const res = await apiFetch(`http://localhost:4000/api/employee/${id}`, { method: "DELETE" });
         if (!res.ok) throw new Error(`Failed deleting ${id}`);
       }
 
@@ -393,7 +394,7 @@ export default function Admin() {
         const roleIdEntry = Object.entries(roleMap).find(([k, v]) => v === create.role)?.[0];
         const role_id = roleIdEntry ? parseInt(roleIdEntry, 10) : undefined;
 
-        const res = await fetch("http://localhost:4000/api/employee", {
+        const res = await apiFetch("http://localhost:4000/api/employee", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -432,7 +433,7 @@ export default function Admin() {
             };
             if (needPassword) updateData.password = pendingUpdates[m.id].password;
 
-            const res = await fetch(`http://localhost:4000/api/employee/${m.id}`, {
+            const res = await apiFetch(`http://localhost:4000/api/employee/${m.id}`, {
               method: "PUT",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify(updateData),
@@ -442,7 +443,7 @@ export default function Admin() {
         }
       }
 
-      const rolesRes = await fetch("http://localhost:4000/api/roles");
+      const rolesRes = await apiFetch("http://localhost:4000/api/roles");
       if (!rolesRes.ok) throw new Error("Failed fetching roles");
       const rolesData: RoleApi[] = await rolesRes.json();
       const map: Record<number, RoleKey> = {};
@@ -455,7 +456,7 @@ export default function Admin() {
       });
       setRoleMap(map);
 
-      const empRes = await fetch("http://localhost:4000/api/employee");
+      const empRes = await apiFetch("http://localhost:4000/api/employee");
       if (!empRes.ok) throw new Error("Failed fetching employees");
       const empData = await empRes.json();
       const mapped: Member[] = (empData ?? []).map((e: any) => ({
@@ -484,7 +485,7 @@ export default function Admin() {
     let mounted = true;
     (async () => {
       try {
-        const rolesRes = await fetch("http://localhost:4000/api/roles");
+        const rolesRes = await apiFetch("http://localhost:4000/api/roles");
         if (!rolesRes.ok) throw new Error(`HTTP ${rolesRes.status}`);
         const rolesData: RoleApi[] = await rolesRes.json();
 
@@ -499,7 +500,7 @@ export default function Admin() {
         if (!mounted) return;
         setRoleMap(map);
 
-        const empRes = await fetch("http://localhost:4000/api/employee");
+        const empRes = await apiFetch("http://localhost:4000/api/employee");
         if (!empRes.ok) throw new Error(`HTTP ${empRes.status}`);
         const empData = await empRes.json();
 

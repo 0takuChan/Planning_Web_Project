@@ -5,7 +5,8 @@ import { createRoot } from "react-dom/client";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
+import { AnimatePresence } from "framer-motion";
 import Index from "./pages/Index";
 import NotFound from "./pages/NotFound";
 import Customers from "./pages/Customers";
@@ -18,6 +19,7 @@ import Summary from "./pages/Summary";
 import Steps from "./pages/Steps"; // เพิ่ม import
 import Transportation from "@/pages/Transportation";
 import TransportationDetail from "@/pages/TransportationDetail";
+import PageTransition from "@/components/layout/PageTransition";
 import { toast } from "@/hooks/use-toast";
 
 const queryClient = new QueryClient();
@@ -122,6 +124,37 @@ function RoleBasedRoute({ children, path }: { children: JSX.Element; path: strin
   return children;
 }
 
+function withPageTransition(children: JSX.Element) {
+  return <PageTransition>{children}</PageTransition>;
+}
+
+function AnimatedAppRoutes() {
+  const location = useLocation();
+
+  return (
+    <AnimatePresence mode="wait" initial={false}>
+      <Routes location={location} key={location.pathname}>
+        <Route path="/login" element={<PublicRoute>{withPageTransition(<Login />)}</PublicRoute>} />
+
+        <Route path="/" element={<RoleBasedRoute path="/">{withPageTransition(<Index />)}</RoleBasedRoute>} />
+        <Route path="/customers" element={<RoleBasedRoute path="/customers">{withPageTransition(<Customers />)}</RoleBasedRoute>} />
+        <Route path="/jobs" element={<RoleBasedRoute path="/jobs">{withPageTransition(<Jobs />)}</RoleBasedRoute>} />
+        <Route path="/planning" element={<RoleBasedRoute path="/planning">{withPageTransition(<Planning />)}</RoleBasedRoute>} />
+        <Route path="/add-data" element={<RoleBasedRoute path="/add-data">{withPageTransition(<AddData />)}</RoleBasedRoute>} />
+        <Route path="/summary" element={<RoleBasedRoute path="/summary">{withPageTransition(<Summary />)}</RoleBasedRoute>} />
+        <Route path="/steps" element={<RoleBasedRoute path="/steps">{withPageTransition(<Steps />)}</RoleBasedRoute>} />
+        <Route path="/transportation" element={<RoleBasedRoute path="/transportation">{withPageTransition(<Transportation />)}</RoleBasedRoute>} />
+        <Route
+          path="/transportation/:shipmentId"
+          element={<RoleBasedRoute path="/transportation">{withPageTransition(<TransportationDetail />)}</RoleBasedRoute>}
+        />
+        <Route path="/admin" element={<RoleBasedRoute path="/admin">{withPageTransition(<Admin />)}</RoleBasedRoute>} />
+        <Route path="*" element={withPageTransition(<NotFound />)} />
+      </Routes>
+    </AnimatePresence>
+  );
+}
+
 export default function App() {
   const [role, setRole] = useState<RoleKey | null>(() => getCurrentUserRole());
 
@@ -178,24 +211,7 @@ export default function App() {
           <Toaster />
           <Sonner />
           <BrowserRouter>
-            <Routes>
-              <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
-
-              <Route path="/" element={<RoleBasedRoute path="/"><Index /></RoleBasedRoute>} />
-              <Route path="/customers" element={<RoleBasedRoute path="/customers"><Customers /></RoleBasedRoute>} />
-              <Route path="/jobs" element={<RoleBasedRoute path="/jobs"><Jobs /></RoleBasedRoute>} />
-              <Route path="/planning" element={<RoleBasedRoute path="/planning"><Planning /></RoleBasedRoute>} />
-              <Route path="/add-data" element={<RoleBasedRoute path="/add-data"><AddData /></RoleBasedRoute>} />
-              <Route path="/summary" element={<RoleBasedRoute path="/summary"><Summary /></RoleBasedRoute>} />
-              <Route path="/steps" element={<RoleBasedRoute path="/steps"><Steps /></RoleBasedRoute>} /> {/* เพิ่ม route */}
-              <Route path="/transportation" element={<RoleBasedRoute path="/transportation"><Transportation /></RoleBasedRoute>} />
-              <Route
-                path="/transportation/:shipmentId"
-                element={<RoleBasedRoute path="/transportation"><TransportationDetail /></RoleBasedRoute>}
-              />
-              <Route path="/admin" element={<RoleBasedRoute path="/admin"><Admin /></RoleBasedRoute>} />
-              <Route path="*" element={<NotFound />} />
-            </Routes>
+            <AnimatedAppRoutes />
           </BrowserRouter>
         </TooltipProvider>
       </PermissionsContext.Provider>
