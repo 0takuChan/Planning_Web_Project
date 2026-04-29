@@ -90,7 +90,7 @@ export default function Customers() {
   const fetchCustomers = async () => {
     setLoading(true);
     try {
-      const response = await apiFetch("http://localhost:4000/api/customers");
+      const response = await apiFetch("/customers");
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const data = await response.json();
       
@@ -145,7 +145,7 @@ export default function Customers() {
         address_detail: draft.location.trim()
       };
 
-      const response = await apiFetch("http://localhost:4000/api/customers", {
+      const response = await apiFetch("/customers", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -218,7 +218,7 @@ export default function Customers() {
     }
     
     try {
-      const response = await apiFetch(`http://localhost:4000/api/customers/${editDraft.id}`, {
+      const response = await apiFetch(`/customers/${editDraft.id}`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
@@ -277,7 +277,7 @@ export default function Customers() {
     if (!customerToDelete) return;
 
     try {
-      const response = await apiFetch(`http://localhost:4000/api/customers/${customerToDelete.id}`, {
+      const response = await apiFetch(`/customers/${customerToDelete.id}`, {
         method: "DELETE",
       });
 

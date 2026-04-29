@@ -122,7 +122,7 @@ export default function Navbar() {
 
     try {
       // ขั้นแรก: ตรวจสอบรหัสผ่านปัจจุบันโดยพยายาม login
-      const loginResponse = await apiFetch("http://localhost:4000/api/login", {
+      const loginResponse = await apiFetch("/login", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -138,7 +138,7 @@ export default function Navbar() {
       }
 
       // ขั้นที่สอง: อัพเดทรหัสผ่านใหม่
-      const updateResponse = await apiFetch(`http://localhost:4000/api/employee/${userId}`, {
+      const updateResponse = await apiFetch(`/employee/${userId}`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",

@@ -11,9 +11,6 @@ import {
   Printer,
 } from "lucide-react";
 
-// API Base URL
-const API_BASE_URL = 'http://localhost:4000/api';
-
 interface Job {
   job_id: number;
   job_number: string;
@@ -108,9 +105,9 @@ export default function Summary() {
       try {
         setLoading(true);
         const [jobsRes, jobStepsRes, logsRes] = await Promise.all([
-          apiFetch(`${API_BASE_URL}/jobs`),
-          apiFetch(`${API_BASE_URL}/jobsteps`),
-          apiFetch(`${API_BASE_URL}/productionlogs`),
+          apiFetch('/jobs'),
+          apiFetch('/jobsteps'),
+          apiFetch('/productionlogs'),
         ]);
 
         const jobsData: Job[] = await jobsRes.json();

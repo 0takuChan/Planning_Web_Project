@@ -71,7 +71,7 @@ export default function Steps() {
     try {
       setLoading(true);
       // ใช้ port 4000 ตาม backend
-      const response = await apiFetch('http://localhost:4000/api/steps');
+      const response = await apiFetch('/steps');
       
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
@@ -123,7 +123,7 @@ export default function Steps() {
 
     try {
       setIsSubmitting(true);
-      const response = await apiFetch('http://localhost:4000/api/steps', {
+      const response = await apiFetch('/steps', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -194,7 +194,7 @@ export default function Steps() {
 
     try {
       setIsSubmitting(true);
-      const response = await apiFetch(`http://localhost:4000/api/steps/${editingStep.step_id}`, {
+      const response = await apiFetch(`/steps/${editingStep.step_id}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -238,7 +238,7 @@ export default function Steps() {
 
   const handleDeleteStep = async (step: Step) => {
     try {
-      const response = await apiFetch(`http://localhost:4000/api/steps/${step.step_id}`, {
+      const response = await apiFetch(`/steps/${step.step_id}`, {
         method: 'DELETE',
       });
 

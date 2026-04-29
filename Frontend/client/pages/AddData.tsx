@@ -309,10 +309,10 @@ export default function AddData() {
       
       try {
         const [jobsRes, jobStepsRes, productionLogsRes, employeesRes] = await Promise.all([
-          apiFetch("http://localhost:4000/api/jobs"),
-          apiFetch("http://localhost:4000/api/jobsteps"),
-          apiFetch("http://localhost:4000/api/productionlogs"),
-          apiFetch("http://localhost:4000/api/employee")
+          apiFetch("/jobs"),
+          apiFetch("/jobsteps"),
+          apiFetch("/productionlogs"),
+          apiFetch("/employee")
         ]);
 
         if (!jobsRes.ok) throw new Error(`Jobs API: ${jobsRes.status}`);
@@ -428,7 +428,7 @@ export default function AddData() {
         employee_id: currentEmployeeId,
       };
 
-      const response = await apiFetch("http://localhost:4000/api/productionlogs", {
+      const response = await apiFetch("/productionlogs", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -489,7 +489,7 @@ export default function AddData() {
         employee_id: productionLogs[editIdx].employee_id, // เก็บ employee เดิม
       };
 
-      const response = await apiFetch(`http://localhost:4000/api/productionlogs/${logId}`, {
+      const response = await apiFetch(`/productionlogs/${logId}`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
@@ -520,7 +520,7 @@ export default function AddData() {
     try {
       const logId = productionLogs[editIdx].log_id;
 
-      const response = await apiFetch(`http://localhost:4000/api/productionlogs/${logId}`, {
+      const response = await apiFetch(`/productionlogs/${logId}`, {
         method: "DELETE",
       });
 

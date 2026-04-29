@@ -1,22 +1,5 @@
 import { getToken, logout } from "@/lib/auth";
-
-const API_BASE_URL = "http://localhost:4000/api";
-
-function resolveApiUrl(input: string): string {
-  if (input.startsWith("http://") || input.startsWith("https://")) {
-    return input;
-  }
-
-  if (input.startsWith("/api/")) {
-    return `http://localhost:4000${input}`;
-  }
-
-  if (input.startsWith("/")) {
-    return `${API_BASE_URL}${input}`;
-  }
-
-  return `${API_BASE_URL}/${input}`;
-}
+import { API_BASE_URL, resolveApiUrl } from "@/lib/api-config";
 
 function shouldAttachToken(url: string): boolean {
   return url.startsWith(API_BASE_URL) && !url.endsWith("/login");

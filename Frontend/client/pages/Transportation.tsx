@@ -34,8 +34,6 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import NewShipmentBadge from "@/components/transportation/NewShipmentBadge";
 import { apiFetch } from "@/lib/api";
 
-const API_BASE_URL = "http://localhost:4000/api";
-
 interface Customer {
   customer_id: number;
   customer_code: string;
@@ -148,12 +146,12 @@ export default function Transportation() {
           shipmentStatusesRes,
           jobStepsRes,
         ] = await Promise.all([
-          apiFetch(`${API_BASE_URL}/shipments`),
-          apiFetch(`${API_BASE_URL}/customers`),
-          apiFetch(`${API_BASE_URL}/jobs`),
-          apiFetch(`${API_BASE_URL}/transport-types`),
-          apiFetch(`${API_BASE_URL}/shipment-statuses`),
-          apiFetch(`${API_BASE_URL}/jobsteps`),
+          apiFetch('/shipments'),
+          apiFetch('/customers'),
+          apiFetch('/jobs'),
+          apiFetch('/transport-types'),
+          apiFetch('/shipment-statuses'),
+          apiFetch('/jobsteps'),
         ]);
 
         if (
@@ -202,7 +200,7 @@ export default function Transportation() {
 
   const refreshShipments = async () => {
     try {
-      const response = await apiFetch(`${API_BASE_URL}/shipments`);
+      const response = await apiFetch('/shipments');
       if (!response.ok) {
         throw new Error("Failed to reload shipments");
       }
@@ -409,7 +407,7 @@ export default function Transportation() {
     const createShipment = async () => {
       try {
         setIsSubmitting(true);
-        const response = await apiFetch(`${API_BASE_URL}/shipments`, {
+        const response = await apiFetch('/shipments', {
           method: "POST",
           headers: {
             "Content-Type": "application/json",

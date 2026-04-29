@@ -353,11 +353,11 @@ export default function Dashboard() {
       try {
         // Fetch all data in parallel
         const [jobsResponse, stepsResponse, jobStepsResponse, productionLogsResponse, shipmentsResponse] = await Promise.all([
-          apiFetch("http://localhost:4000/api/jobs"),
-          apiFetch("http://localhost:4000/api/steps"),
-          apiFetch("http://localhost:4000/api/jobsteps"),
-          apiFetch("http://localhost:4000/api/productionlogs"),
-          apiFetch("http://localhost:4000/api/shipments")
+          apiFetch("/jobs"),
+          apiFetch("/steps"),
+          apiFetch("/jobsteps"),
+          apiFetch("/productionlogs"),
+          apiFetch("/shipments")
         ]);
 
         // Check responses

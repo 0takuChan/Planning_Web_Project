@@ -1,3 +1,5 @@
+import { resolveApiUrl } from "@/lib/api-config";
+
 export interface LoginResponse {
   token: string;
   user: {
@@ -57,7 +59,7 @@ function isTokenExpired(payload: JwtTokenPayload | null): boolean {
 }
 
 export async function login(username: string, password: string): Promise<LoginResponse> {
-  const res = await fetch("http://localhost:4000/api/login", {
+  const res = await fetch(resolveApiUrl("/login"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ username, password }),

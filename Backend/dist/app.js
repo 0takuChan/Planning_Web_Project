@@ -33,8 +33,18 @@ const authMiddleware_1 = require("./middleware/authMiddleware");
 const updateShipmentStatus_1 = require("./utils/updateShipmentStatus");
 dotenv_1.default.config();
 const app = (0, express_1.default)();
+const allowedOrigins = (process.env.CORS_ORIGIN || "http://localhost:5173,http://localhost:8080")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
 app.use((0, cors_1.default)({
-    origin: "http://localhost:8080", // frontend port
+    origin: (origin, callback) => {
+        if (!origin || allowedOrigins.includes(origin)) {
+            callback(null, true);
+            return;
+        }
+        callback(new Error(`CORS blocked for origin: ${origin}`));
+    },
     credentials: true,
 }));
 app.use(express_1.default.json());

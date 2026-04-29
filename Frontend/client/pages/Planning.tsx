@@ -162,8 +162,6 @@ function getStepColor(stepName: string): string {
   return generatedColor;
 }
 
-// API Base URL
-const API_BASE_URL = 'http://localhost:4000/api';
 const PLANNING_PROGRESS_KEY_SEPARATOR = '::';
 const AUTO_PLAN_NEW_MARKERS_STORAGE_KEY = 'planning-auto-new-markers';
 
@@ -396,8 +394,8 @@ export default function Planning() {
 
   const refreshPlanningState = async () => {
     const [planningsRes, productionLogsRes] = await Promise.all([
-      apiFetch(`${API_BASE_URL}/plannings`),
-      apiFetch(`${API_BASE_URL}/productionlogs`),
+      apiFetch('/plannings'),
+      apiFetch('/productionlogs'),
     ]);
     const [planningsData, productionLogsData]: [Planning[], ProductionLog[]] = await Promise.all([
       planningsRes.json(),
@@ -439,11 +437,11 @@ export default function Planning() {
       try {
         setLoading(true);
         const [jobsRes, stepsRes, jobStepsRes, planningsRes, productionLogsRes] = await Promise.all([
-          apiFetch(`${API_BASE_URL}/jobs`),
-          apiFetch(`${API_BASE_URL}/steps`),
-          apiFetch(`${API_BASE_URL}/jobsteps`),
-          apiFetch(`${API_BASE_URL}/plannings`),
-          apiFetch(`${API_BASE_URL}/productionlogs`),
+          apiFetch('/jobs'),
+          apiFetch('/steps'),
+          apiFetch('/jobsteps'),
+          apiFetch('/plannings'),
+          apiFetch('/productionlogs'),
         ]);
 
         const jobsData: Job[] = await jobsRes.json();
@@ -806,7 +804,7 @@ export default function Planning() {
 
     try {
       // Call API to create planning
-      const response = await apiFetch(`${API_BASE_URL}/plannings`, {
+      const response = await apiFetch('/plannings', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -868,7 +866,7 @@ export default function Planning() {
     if (!event || !event.planning_id) return;
 
     try {
-      const response = await apiFetch(`${API_BASE_URL}/plannings/${event.planning_id}`, {
+      const response = await apiFetch(`/plannings/${event.planning_id}`, {
         method: 'DELETE',
       });
 
@@ -915,7 +913,7 @@ export default function Planning() {
     if (!newJobStep) return;
 
     try {
-      const response = await apiFetch(`${API_BASE_URL}/plannings/${event.planning_id}`, {
+      const response = await apiFetch(`/plannings/${event.planning_id}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -994,7 +992,7 @@ export default function Planning() {
       setAutoPlanProcessedCount(0);
       setActiveAutoPlanLabel(job.id);
 
-      const response = await apiFetch(`${API_BASE_URL}/plannings/auto-plan`, {
+      const response = await apiFetch('/plannings/auto-plan', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1055,7 +1053,7 @@ export default function Planning() {
       setAutoPlanProcessedCount(0);
       setActiveAutoPlanLabel(`${incompleteJobs.length} jobs`);
       
-      const response = await apiFetch(`${API_BASE_URL}/plannings/auto-plan-batch`, {
+      const response = await apiFetch('/plannings/auto-plan-batch', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1149,7 +1147,7 @@ export default function Planning() {
 
     try {
       setIsClearPlanningLoading(true);
-      const response = await apiFetch(`${API_BASE_URL}/plannings/job/${job.job_id}`, {
+      const response = await apiFetch(`/plannings/job/${job.job_id}`, {
         method: 'DELETE',
       });
 
