@@ -4,14 +4,14 @@ import { PrismaClient, Planning } from "@prisma/client";
 const router = express.Router();
 const prisma = new PrismaClient();
 
-function parseLocalDate(dateString: string): Date {
+function parseDateOnlyUtc(dateString: string): Date {
   const [year, month, day] = dateString.split("-").map(Number);
-  return new Date(year, month - 1, day);
+  return new Date(Date.UTC(year, month - 1, day));
 }
 
-function endOfLocalDate(dateString: string): Date {
+function endOfDateOnlyUtc(dateString: string): Date {
   const [year, month, day] = dateString.split("-").map(Number);
-  return new Date(year, month - 1, day, 23, 59, 59, 999);
+  return new Date(Date.UTC(year, month - 1, day, 23, 59, 59, 999));
 }
 
 async function getUsedMinutesForStepOnDate(
@@ -22,8 +22,8 @@ async function getUsedMinutesForStepOnDate(
   const plannings = await prisma.planning.findMany({
     where: {
       planned_date: {
-        gte: parseLocalDate(plannedDate),
-        lte: endOfLocalDate(plannedDate),
+        gte: parseDateOnlyUtc(plannedDate),
+        lte: endOfDateOnlyUtc(plannedDate),
       },
       ...(excludePlanningId
         ? {
@@ -147,7 +147,7 @@ router.post("/", async (req: Request<{}, {}, CreatePlanningBody>, res: Response)
 
     // ตรวจสอบว่ามี Planning ซ้ำวันไหม
     const existingSameDay = await prisma.planning.findFirst({
-      where: { job_step_id, planned_date: new Date(planned_date) },
+      where: { job_step_id, planned_date: parseDateOnlyUtc(planned_date) },
     });
 
     // รวม planned_quantity ทั้งหมดของ job_step_id
@@ -192,7 +192,7 @@ router.post("/", async (req: Request<{}, {}, CreatePlanningBody>, res: Response)
         data: {
           job_step_id,
           job_id, // เพิ่มอัตโนมัติ
-          planned_date: new Date(planned_date),
+          planned_date: parseDateOnlyUtc(planned_date),
           planned_quantity,
         },
       });
@@ -270,7 +270,7 @@ router.put("/:id", async (req: Request<{ id: string }, {}, CreatePlanningBody>, 
       data: {
         job_step_id,
         job_id,
-        planned_date: new Date(planned_date),
+          planned_date: parseDateOnlyUtc(planned_date),
         planned_quantity,
       },
     });

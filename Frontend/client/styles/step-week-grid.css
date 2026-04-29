@@ -1,6 +1,38 @@
 .step-week-grid{ width:100%; }
 .step-week-grid .swg-cell{ min-height:4rem; border-left:1px solid hsl(var(--border)); padding:.25rem; display:flex; flex-wrap:wrap; gap:.25rem; align-items:flex-start; }
 
+.planning-day-cell {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.planning-day-cell::-webkit-scrollbar {
+  display: none;
+}
+
+.calendar-grid-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.9) transparent;
+}
+
+.calendar-grid-scroll::-webkit-scrollbar {
+  height: 8px;
+  width: 8px;
+}
+
+.calendar-grid-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.calendar-grid-scroll::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.9);
+  border-radius: 999px;
+}
+
+.calendar-grid-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(100, 116, 139, 0.95);
+}
+
 /* Event chip responsive styles for month view */
 .step-week-grid.month-view .event-chip {
   font-size: 9px;
@@ -53,11 +85,101 @@
 }
 
 .planning-event-chip {
-  transition: opacity 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
+  transition: opacity 0.2s ease, box-shadow 0.24s ease, transform 0.24s ease, filter 0.24s ease;
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  min-height: 20px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.planning-event-chip.has-new-badge {
+  overflow: visible;
+}
+
+.planning-chip-label {
+  display: block;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.planning-more-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.planning-more-popover {
+  border-color: rgb(226 232 240 / 0.95);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(248, 250, 252, 0.98) 100%);
+  box-shadow: 0 14px 34px rgba(15, 23, 42, 0.14);
+}
+
+.planning-new-badge-layer {
+  pointer-events: none;
+}
+
+.planning-event-chip.status-done {
+  box-shadow:
+    inset 0 0 0 1px rgba(16, 185, 129, 0.25),
+    0 4px 12px rgba(16, 185, 129, 0.16);
+}
+
+.planning-event-chip.status-working {
+  box-shadow:
+    inset 0 0 0 1px rgba(245, 158, 11, 0.24),
+    0 4px 12px rgba(245, 158, 11, 0.16);
+}
+
+.planning-event-chip.status-delay {
+  box-shadow:
+    inset 0 0 0 1px rgba(244, 63, 94, 0.22),
+    0 4px 12px rgba(244, 63, 94, 0.16);
+}
+
+.step-week-grid.status-mode .planning-event-chip.status-animated {
+  animation: planning-status-enter 0.34s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.step-week-grid.status-mode .planning-event-chip:hover {
+  opacity: 1;
+  transform: translateY(-1px) scale(1.01);
+  filter: saturate(1.03);
+}
+
+.planning-event-chip:hover {
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
+}
+
+.step-week-grid.status-mode .planning-event-chip:active {
+  transform: translateY(0) scale(0.99);
 }
 
 .planning-event-chip.is-locating {
   box-shadow:
     0 0 0 2px rgba(255, 255, 255, 0.92),
     0 10px 24px hsl(var(--brand-end) / 0.34);
+}
+
+.planning-event-chip.is-overdue {
+  box-shadow:
+    inset 3px 0 0 rgba(220, 38, 38, 0.92),
+    0 1px 2px rgba(15, 23, 42, 0.08);
+}
+
+.planning-overdue-icon {
+  color: #fb7185;
+  filter: drop-shadow(0 1px 1px rgba(127, 29, 29, 0.35));
+}
+
+@keyframes planning-status-enter {
+  0% {
+    opacity: 0;
+    transform: translateY(5px) scale(0.97);
+    filter: saturate(0.94);
+  }
+
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: saturate(1);
+  }
 }

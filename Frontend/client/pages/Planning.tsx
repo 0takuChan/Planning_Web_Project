@@ -1,15 +1,16 @@
 import "@/styles/planning.css";
 import { useEffect, useState, useMemo } from "react";
 import { parseISO, startOfMonth, addMonths, getDaysInMonth, addDays, format } from "date-fns";
-import StepWeekGrid, { StepEvent } from "../components/planning/StepWeekGrid";
+import StepWeekGrid, { StepEvent, PlanningEventStatus } from "../components/planning/StepWeekGrid";
 import AppLayout from "@/components/layout/Sidebar";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { usePermissions } from "@/App";
 import { apiFetch } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { toast } from "@/hooks/use-toast";
 import { List, ArrowUpDown, Search, Sparkles, AlertTriangle, CheckCircle2, Info } from "lucide-react";
-import NewItemBadge from "@/components/common/NewItemBadge";
+import NewItemBadge, { isRecentDate } from "@/components/common/NewItemBadge";
 
 interface Job {
   job_id: number;
@@ -44,11 +45,19 @@ interface Planning {
   jobStep?: {
     job?: {
       job_number: string;
+      end_date?: string;
     };
     step?: {
       step_name: string;
     };
   };
+}
+
+interface ProductionLog {
+  log_id: number;
+  job_step_id: number;
+  log_date: string;
+  quantity: number;
 }
 
 interface JobItem {
@@ -63,6 +72,7 @@ interface JobItem {
 type JobListFilter = 'all' | 'unplanned' | 'planned' | 'complete';
 type PlanningSortField = 'job' | 'step' | 'date' | 'quantity';
 type AutoPlanFeedbackTone = 'success' | 'error' | 'info';
+type AutoPlanningMarkerMap = Record<string, string>;
 
 interface AutoPlanFeedbackState {
   open: boolean;
@@ -70,6 +80,18 @@ interface AutoPlanFeedbackState {
   title: string;
   message: string;
   details: string[];
+}
+
+interface ClearPlanningDialogState {
+  open: boolean;
+  job: JobItem | null;
+}
+
+interface BatchPriorityRecommendation {
+  job_id: number;
+  job_number: string;
+  priority: number | null;
+  reason: string;
 }
 
 const stepColorPalette: Record<string, string> = {
@@ -142,6 +164,33 @@ function getStepColor(stepName: string): string {
 
 // API Base URL
 const API_BASE_URL = 'http://localhost:4000/api';
+const PLANNING_PROGRESS_KEY_SEPARATOR = '::';
+const AUTO_PLAN_NEW_MARKERS_STORAGE_KEY = 'planning-auto-new-markers';
+
+function pruneAutoPlanningMarkerMap(markers: AutoPlanningMarkerMap): AutoPlanningMarkerMap {
+  return Object.fromEntries(
+    Object.entries(markers).filter(([, createdAt]) => isRecentDate(createdAt))
+  );
+}
+
+function loadAutoPlanningMarkerMap(): AutoPlanningMarkerMap {
+  if (typeof window === 'undefined') {
+    return {};
+  }
+
+  try {
+    const rawValue = window.localStorage.getItem(AUTO_PLAN_NEW_MARKERS_STORAGE_KEY);
+    if (!rawValue) {
+      return {};
+    }
+
+    const parsedValue = JSON.parse(rawValue) as AutoPlanningMarkerMap;
+    return pruneAutoPlanningMarkerMap(parsedValue ?? {});
+  } catch (error) {
+    console.error('Failed to load auto-plan new markers:', error);
+    return {};
+  }
+}
 
 function getApiDateOnly(dateValue: string): string {
   return dateValue.split('T')[0];
@@ -151,11 +200,114 @@ function parseApiDate(dateValue: string): Date {
   return parseISO(getApiDateOnly(dateValue));
 }
 
+function isPlanningOverdue(plannedDate: string, dueDate?: string): boolean {
+  if (!dueDate) {
+    return false;
+  }
+
+  return getApiDateOnly(plannedDate) > getApiDateOnly(dueDate);
+}
+
+function getPlanningProgressKey(jobStepId: number, dateValue: string): string {
+  return `${jobStepId}${PLANNING_PROGRESS_KEY_SEPARATOR}${getApiDateOnly(dateValue)}`;
+}
+
+function getPlanningStatus(
+  plannedDate: string,
+  plannedQty: number,
+  loggedQty: number,
+): PlanningEventStatus | undefined {
+  const normalizedLoggedQty = Math.max(0, loggedQty);
+
+  if (plannedQty > 0 && normalizedLoggedQty >= plannedQty) {
+    return 'done';
+  }
+
+  if (getApiDateOnly(plannedDate) < format(new Date(), 'yyyy-MM-dd')) {
+    return 'delay';
+  }
+
+  if (normalizedLoggedQty > 0) {
+    return 'working';
+  }
+
+  return undefined;
+}
+
+function buildPlanningProgressMap(planningsData: Planning[], productionLogs: ProductionLog[]) {
+  const plannedQtyByKey = new Map<string, number>();
+  const loggedQtyByKey = new Map<string, number>();
+
+  planningsData.forEach((planning) => {
+    const key = getPlanningProgressKey(planning.job_step_id, planning.planned_date);
+    plannedQtyByKey.set(key, (plannedQtyByKey.get(key) ?? 0) + planning.planned_quantity);
+  });
+
+  productionLogs.forEach((log) => {
+    const key = getPlanningProgressKey(log.job_step_id, log.log_date);
+    loggedQtyByKey.set(key, (loggedQtyByKey.get(key) ?? 0) + log.quantity);
+  });
+
+  return new Map(
+    Array.from(plannedQtyByKey.entries()).map(([key, plannedQty]) => {
+      const [, plannedDate] = key.split(PLANNING_PROGRESS_KEY_SEPARATOR);
+      const loggedQty = loggedQtyByKey.get(key) ?? 0;
+      return [
+        key,
+        {
+          plannedQty,
+          loggedQty,
+          status: getPlanningStatus(plannedDate, plannedQty, loggedQty),
+        },
+      ];
+    }),
+  );
+}
+
+function buildPlanningEvents(
+  planningsData: Planning[],
+  currentPlanningDate: Date,
+  jobStepsData: JobStep[],
+  productionLogs: ProductionLog[],
+  newAutoPlanningIds: Set<number>,
+): StepEvent[] {
+  const monthStart = startOfMonth(currentPlanningDate);
+  const progressMap = buildPlanningProgressMap(planningsData, productionLogs);
+
+  return planningsData
+    .filter(planning => planning.jobStep?.job && planning.jobStep?.step)
+    .map((planning) => {
+      const plannedDate = parseApiDate(planning.planned_date);
+      const dayDiff = Math.floor((plannedDate.getTime() - monthStart.getTime()) / (1000 * 60 * 60 * 24));
+      const progress = progressMap.get(getPlanningProgressKey(planning.job_step_id, planning.planned_date));
+
+      return {
+        id: `planning-${planning.planning_id}`,
+        planning_id: planning.planning_id,
+        step: planning.jobStep!.step!.step_name,
+        day: dayDiff + 1,
+        jobId: planning.jobStep!.job!.job_number,
+        qty: planning.planned_quantity,
+        color: getStepColor(planning.jobStep!.step!.step_name),
+        date: getApiDateOnly(planning.planned_date),
+        job_step_id: planning.job_step_id,
+        minutesPerUnit: jobStepsData.find((jobStep) => jobStep.job_step_id === planning.job_step_id)?.minutes_per_unit ?? null,
+        dueDate: planning.jobStep?.job?.end_date ? getApiDateOnly(planning.jobStep.job.end_date) : undefined,
+        isOverdue: isPlanningOverdue(planning.planned_date, planning.jobStep?.job?.end_date),
+        isNewAutoPlanned: newAutoPlanningIds.has(planning.planning_id),
+        status: progress?.status,
+        loggedQty: progress?.loggedQty ?? 0,
+        totalPlannedQty: progress?.plannedQty ?? planning.planned_quantity,
+      };
+    });
+}
+
 export default function Planning() {
   const { canEdit } = usePermissions();
   const canEditPage = canEdit("/planning");
 
   const [viewMode, setViewMode] = useState<'week' | 'month'>('month');
+  const [showStatusColors, setShowStatusColors] = useState<boolean>(false);
   const [currentWeekPage, setCurrentWeekPage] = useState<number>(0);
   const [events, setEvents] = useState<StepEvent[]>([]);
   const [selected, setSelected] = useState<JobItem | null>(null);
@@ -197,6 +349,11 @@ export default function Planning() {
     message: '',
     details: [],
   });
+  const [clearPlanningDialog, setClearPlanningDialog] = useState<ClearPlanningDialogState>({
+    open: false,
+    job: null,
+  });
+  const [isClearPlanningLoading, setIsClearPlanningLoading] = useState<boolean>(false);
 
   // Data from API
   const [jobs, setJobs] = useState<JobItem[]>([]);
@@ -204,10 +361,17 @@ export default function Planning() {
   const [stepsData, setStepsData] = useState<Step[]>([]); // Add raw steps data
   const [jobSteps, setJobSteps] = useState<JobStep[]>([]);
   const [plannings, setPlannings] = useState<Planning[]>([]);
+  const [productionLogs, setProductionLogs] = useState<ProductionLog[]>([]);
+  const [newAutoPlanningMarkers, setNewAutoPlanningMarkers] = useState<AutoPlanningMarkerMap>(() => loadAutoPlanningMarkerMap());
   const [loading, setLoading] = useState(true);
 
   const [currentDate, setCurrentDate] = useState<Date>(
     startOfMonth(new Date())
+  );
+
+  const newAutoPlanningIds = useMemo(
+    () => new Set(Object.keys(newAutoPlanningMarkers).map((planningId) => Number(planningId))),
+    [newAutoPlanningMarkers]
   );
 
   const showAutoPlanFeedback = (
@@ -231,54 +395,62 @@ export default function Planning() {
   };
 
   const refreshPlanningState = async () => {
-    const planningsRes = await apiFetch(`${API_BASE_URL}/plannings`);
-    const planningsData: Planning[] = await planningsRes.json();
+    const [planningsRes, productionLogsRes] = await Promise.all([
+      apiFetch(`${API_BASE_URL}/plannings`),
+      apiFetch(`${API_BASE_URL}/productionlogs`),
+    ]);
+    const [planningsData, productionLogsData]: [Planning[], ProductionLog[]] = await Promise.all([
+      planningsRes.json(),
+      productionLogsRes.json(),
+    ]);
     setPlannings(planningsData);
-
-    const transformedEvents: StepEvent[] = planningsData
-      .filter(planning => planning.jobStep?.job && planning.jobStep?.step)
-      .map(planning => {
-        const plannedDate = parseApiDate(planning.planned_date);
-        const monthStart = startOfMonth(currentDate);
-        const dayDiff = Math.floor((plannedDate.getTime() - monthStart.getTime()) / (1000 * 60 * 60 * 24));
-
-        return {
-          id: `planning-${planning.planning_id}`,
-          planning_id: planning.planning_id,
-          step: planning.jobStep!.step!.step_name,
-          day: dayDiff + 1,
-          jobId: planning.jobStep!.job!.job_number,
-          qty: planning.planned_quantity,
-          color: getStepColor(planning.jobStep!.step!.step_name),
-          date: getApiDateOnly(planning.planned_date),
-          job_step_id: planning.job_step_id,
-          minutesPerUnit: jobSteps.find((jobStep) => jobStep.job_step_id === planning.job_step_id)?.minutes_per_unit ?? null,
-        };
-      });
-
-    setEvents(transformedEvents);
+    setProductionLogs(productionLogsData);
     setSelected(null);
   };
+
+  useEffect(() => {
+    setEvents(buildPlanningEvents(plannings, currentDate, jobSteps, productionLogs, newAutoPlanningIds));
+  }, [plannings, currentDate, jobSteps, productionLogs, newAutoPlanningIds]);
+
+  useEffect(() => {
+    const prunedMarkers = pruneAutoPlanningMarkerMap(newAutoPlanningMarkers);
+
+    if (Object.keys(prunedMarkers).length !== Object.keys(newAutoPlanningMarkers).length) {
+      setNewAutoPlanningMarkers(prunedMarkers);
+      return;
+    }
+
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(AUTO_PLAN_NEW_MARKERS_STORAGE_KEY, JSON.stringify(prunedMarkers));
+    }
+  }, [newAutoPlanningMarkers]);
+
+  useEffect(() => {
+    const pruneInterval = window.setInterval(() => {
+      setNewAutoPlanningMarkers((previous) => pruneAutoPlanningMarkerMap(previous));
+    }, 60 * 1000);
+
+    return () => window.clearInterval(pruneInterval);
+  }, []);
 
   // Fetch data from API
   useEffect(() => {
     const fetchData = async () => {
       try {
         setLoading(true);
-        const [jobsRes, stepsRes, jobStepsRes, planningsRes] = await Promise.all([
+        const [jobsRes, stepsRes, jobStepsRes, planningsRes, productionLogsRes] = await Promise.all([
           apiFetch(`${API_BASE_URL}/jobs`),
           apiFetch(`${API_BASE_URL}/steps`),
           apiFetch(`${API_BASE_URL}/jobsteps`),
           apiFetch(`${API_BASE_URL}/plannings`),
+          apiFetch(`${API_BASE_URL}/productionlogs`),
         ]);
 
         const jobsData: Job[] = await jobsRes.json();
         const stepsData: Step[] = await stepsRes.json();
         const jobStepsData: JobStep[] = await jobStepsRes.json();
         const planningsData: Planning[] = await planningsRes.json();
-
-        console.log('JobSteps data:', jobStepsData); // Debug log
-        console.log('Plannings data:', planningsData); // Debug log
+        const productionLogsData: ProductionLog[] = await productionLogsRes.json();
 
         // Transform jobs data
         const transformedJobs: JobItem[] = jobsData.map(job => ({
@@ -301,29 +473,7 @@ export default function Planning() {
         setStepsData(stepsData); // Store raw steps data
         setJobSteps(jobStepsData);
         setPlannings(planningsData);
-
-        const transformedEvents: StepEvent[] = planningsData
-          .filter(planning => planning.jobStep?.job && planning.jobStep?.step)
-          .map(planning => {
-            const plannedDate = parseApiDate(planning.planned_date);
-            const monthStart = startOfMonth(currentDate);
-            const dayDiff = Math.floor((plannedDate.getTime() - monthStart.getTime()) / (1000 * 60 * 60 * 24));
-
-            return {
-              id: `planning-${planning.planning_id}`,
-              planning_id: planning.planning_id,
-              step: planning.jobStep!.step!.step_name,
-              day: dayDiff + 1,
-              jobId: planning.jobStep!.job!.job_number,
-              qty: planning.planned_quantity,
-              color: getStepColor(planning.jobStep!.step!.step_name),
-              date: getApiDateOnly(planning.planned_date),
-              job_step_id: planning.job_step_id,
-              minutesPerUnit: jobStepsData.find((jobStep) => jobStep.job_step_id === planning.job_step_id)?.minutes_per_unit ?? null,
-            };
-          });
-
-        setEvents(transformedEvents);
+        setProductionLogs(productionLogsData);
       } catch (error) {
         console.error('Error fetching data:', error);
       } finally {
@@ -559,6 +709,14 @@ export default function Planning() {
     [filteredPlanningsList, locatingPlanningId]
   );
 
+  const clearPlanningCount = useMemo(() => {
+    if (!clearPlanningDialog.job) {
+      return 0;
+    }
+
+    return events.filter((planningEvent) => planningEvent.jobId === clearPlanningDialog.job?.id).length;
+  }, [clearPlanningDialog.job, events]);
+
   const handlePlanningSort = (field: PlanningSortField) => {
     if (planningSortField === field) {
       setPlanningSortDescending((previous) => !previous);
@@ -662,7 +820,11 @@ export default function Planning() {
 
       if (!response.ok) {
         const error = await response.json();
-        alert(error.error || 'เกิดข้อผิดพลาดในการบันทึกข้อมูล');
+        toast({
+          title: 'บันทึก Planning ไม่สำเร็จ',
+          description: error.error || 'เกิดข้อผิดพลาดในการบันทึกข้อมูล',
+          variant: 'destructive',
+        });
         return;
       }
 
@@ -678,6 +840,7 @@ export default function Planning() {
         jobStep: {
           job: {
             job_number: qtyPopup.jobId,
+            end_date: job?.due,
           },
           step: {
             step_name: qtyPopup.step,
@@ -686,25 +849,15 @@ export default function Planning() {
       };
 
       // Update local state
-      const newEvent: StepEvent = {
-        id: `planning-${newPlanning.planning_id}`,
-        planning_id: newPlanning.planning_id,
-        step: qtyPopup.step,
-        day: qtyPopup.day,
-        jobId: qtyPopup.jobId,
-        qty,
-        color,
-        date: qtyPopup.date,
-        job_step_id: qtyPopup.job_step_id,
-        minutesPerUnit: jobSteps.find((jobStep) => jobStep.job_step_id === qtyPopup.job_step_id)?.minutes_per_unit ?? null,
-      };
-
-      setEvents((prev) => [...prev, newEvent]);
       setPlannings((prev) => [...prev, completePlanning]);
       setQtyPopup(null);
     } catch (error) {
       console.error('Error creating planning:', error);
-      alert('เกิดข้อผิดพลาดในการบันทึกข้อมูล');
+      toast({
+        title: 'บันทึก Planning ไม่สำเร็จ',
+        description: 'เกิดข้อผิดพลาดในการบันทึกข้อมูล',
+        variant: 'destructive',
+      });
     }
   };
 
@@ -721,17 +874,29 @@ export default function Planning() {
 
       if (!response.ok) {
         const error = await response.json();
-        alert(error.error || 'เกิดข้อผิดพลาดในการลบข้อมูล');
+        toast({
+          title: 'ลบ Planning ไม่สำเร็จ',
+          description: error.error || 'เกิดข้อผิดพลาดในการลบข้อมูล',
+          variant: 'destructive',
+        });
         return;
       }
 
       // Update local state
-      setEvents((prev) => prev.filter((e) => e.id !== id));
       setPlannings((prev) => prev.filter((p) => p.planning_id !== event.planning_id));
+      setNewAutoPlanningMarkers((previous) => {
+        const next = { ...previous };
+        delete next[String(event.planning_id)];
+        return next;
+      });
       setDeletePopup(null); // Close delete popup
     } catch (error) {
       console.error('Error deleting planning:', error);
-      alert('เกิดข้อผิดพลาดในการลบข้อมูล');
+      toast({
+        title: 'ลบ Planning ไม่สำเร็จ',
+        description: 'เกิดข้อผิดพลาดในการลบข้อมูล',
+        variant: 'destructive',
+      });
     }
   };
 
@@ -764,42 +929,16 @@ export default function Planning() {
 
       if (!response.ok) {
         const error = await response.json();
-        alert(error.error || 'เกิดข้อผิดพลาดในการแก้ไขข้อมูล');
+        toast({
+          title: 'แก้ไข Planning ไม่สำเร็จ',
+          description: error.error || 'เกิดข้อผิดพลาดในการแก้ไขข้อมูล',
+          variant: 'destructive',
+        });
         return;
       }
 
       const updatedPlanning: Planning = await response.json();
-
-      // Update local state with complete data
-      setEvents((prev) => {
-        const eventIndex = prev.findIndex(e => e.id === eventId);
-        if (eventIndex === -1) return prev;
-        
-        const oldEvent = prev[eventIndex];
-        const newEvent: StepEvent = {
-          ...oldEvent,
-          step: newStep,
-          date: newDate,
-          color: steps.find((s) => s.key === newStep)?.color || oldEvent.color,
-          job_step_id: newJobStep.job_step_id,
-          minutesPerUnit: newJobStep.minutes_per_unit ?? null,
-          day: (() => {
-            try {
-              const eventDate = new Date(newDate);
-              const monthStart = startOfMonth(currentDate);
-              const dayDiff = Math.floor((eventDate.getTime() - monthStart.getTime()) / (1000 * 60 * 60 * 24));
-              return dayDiff + 1;
-            } catch (error) {
-              console.error('Error calculating day:', error);
-              return oldEvent.day;
-            }
-          })(),
-        };
-        
-        const newEvents = [...prev];
-        newEvents[eventIndex] = newEvent;
-        return newEvents;
-      });
+      const dueDate = job.due;
 
       setPlannings((prev) => {
         const planningIndex = prev.findIndex(p => p.planning_id === event.planning_id);
@@ -811,6 +950,7 @@ export default function Planning() {
           jobStep: {
             job: {
               job_number: event.jobId,
+              end_date: dueDate,
             },
             step: {
               step_name: newStep,
@@ -824,7 +964,11 @@ export default function Planning() {
       });
     } catch (error) {
       console.error('Error moving event:', error);
-      alert('เกิดข้อผิดพลาดในการย้ายข้อมูล');
+      toast({
+        title: 'ย้าย Planning ไม่สำเร็จ',
+        description: 'เกิดข้อผิดพลาดในการย้ายข้อมูล',
+        variant: 'destructive',
+      });
     }
   };
 
@@ -870,6 +1014,12 @@ export default function Planning() {
       }
 
       setAutoPlanProcessedCount(1);
+      setNewAutoPlanningMarkers((previous) => ({
+        ...previous,
+        ...Object.fromEntries(
+          ((result.plannings ?? []) as Planning[]).map((planning) => [planning.planning_id, new Date().toISOString()])
+        ),
+      }));
       await refreshPlanningState();
       showAutoPlanFeedback(
         'success',
@@ -937,15 +1087,32 @@ export default function Planning() {
       const totalCreated = result.count || 0;
       const successCount = result.jobCount || 0;
       const failedJobs = Array.isArray(result.failedJobs) ? result.failedJobs : [];
+      const priorityRecommendations: BatchPriorityRecommendation[] = Array.isArray(result.priorityRecommendations)
+        ? result.priorityRecommendations
+        : [];
+      setNewAutoPlanningMarkers((previous) => ({
+        ...previous,
+        ...Object.fromEntries(
+          ((result.plannings ?? []) as Planning[]).map((planning) => [planning.planning_id, new Date().toISOString()])
+        ),
+      }));
 
       await refreshPlanningState();
 
       let message = `✅ สำเร็จ: ${successCount}/${incompleteJobs.length} Jobs สร้างแผนการแล้ว (${totalCreated} Planning Records)`;
+      const detailLines = [
+        'Auto Plan All ใช้ AI แค่จัดลำดับความสำคัญของ jobs ก่อน แล้ว backend จะวางวันและจำนวนจริงตามกฎโรงงาน',
+        ...priorityRecommendations.map((item) => {
+          const priorityLabel = item.priority ?? 'fallback';
+          return `${item.job_number} • ลำดับ ${priorityLabel} • ${item.reason}`;
+        }),
+        ...failedJobs,
+      ];
       showAutoPlanFeedback(
         failedJobs.length > 0 ? 'info' : 'success',
         failedJobs.length > 0 ? 'Auto Plan All เสร็จสิ้นแบบมีบาง Job ไม่สำเร็จ' : 'Auto Plan All สำเร็จ',
         message,
-        failedJobs.length > 0 ? failedJobs : []
+        detailLines
       );
     } catch (error) {
       console.error('Error calling auto-plan:', error);
@@ -958,19 +1125,30 @@ export default function Planning() {
     }
   };
 
-  const handleClearJobPlanning = async (job: JobItem) => {
+  const handleClearJobPlanning = (job: JobItem) => {
     if (!canEditPage) return;
     if (!hasJobPlanning(job.id)) {
-      alert(`ยังไม่มี planning สำหรับ ${job.id}`);
+      toast({
+        title: 'ยังไม่มี Planning',
+        description: `ยังไม่มี planning สำหรับ ${job.id}`,
+      });
       return;
     }
 
-    const confirmed = window.confirm(`ลบ planning ทั้งหมดของ ${job.id} ใช่หรือไม่?`);
-    if (!confirmed) {
+    setClearPlanningDialog({
+      open: true,
+      job,
+    });
+  };
+
+  const confirmClearJobPlanning = async () => {
+    const job = clearPlanningDialog.job;
+    if (!job || isClearPlanningLoading) {
       return;
     }
 
     try {
+      setIsClearPlanningLoading(true);
       const response = await apiFetch(`${API_BASE_URL}/plannings/job/${job.job_id}`, {
         method: 'DELETE',
       });
@@ -978,15 +1156,38 @@ export default function Planning() {
       const result = await response.json();
 
       if (!response.ok) {
-        alert(result.error || `เกิดข้อผิดพลาดในการลบ planning ของ ${job.id}`);
+        toast({
+          title: 'ลบ Planning ของ Job ไม่สำเร็จ',
+          description: result.error || `เกิดข้อผิดพลาดในการลบ planning ของ ${job.id}`,
+          variant: 'destructive',
+        });
         return;
       }
 
       await refreshPlanningState();
-      alert(`ลบ planning ของ ${job.id} แล้ว ${result.count || 0} records`);
+      setNewAutoPlanningMarkers((previous) => {
+        const next = { ...previous };
+        events
+          .filter((planningEvent) => planningEvent.jobId === job.id && planningEvent.planning_id !== undefined)
+          .forEach((planningEvent) => {
+            delete next[String(planningEvent.planning_id)];
+          });
+        return next;
+      });
+      setClearPlanningDialog({ open: false, job: null });
+      toast({
+        title: 'ลบ Planning เรียบร้อยแล้ว',
+        description: `ลบ planning ของ ${job.id} แล้ว ${result.count || 0} records`,
+      });
     } catch (error) {
       console.error('Error clearing job planning:', error);
-      alert(`เกิดข้อผิดพลาดในการลบ planning ของ ${job.id}`);
+      toast({
+        title: 'ลบ Planning ของ Job ไม่สำเร็จ',
+        description: `เกิดข้อผิดพลาดในการลบ planning ของ ${job.id}`,
+        variant: 'destructive',
+      });
+    } finally {
+      setIsClearPlanningLoading(false);
     }
   };
 
@@ -1047,6 +1248,20 @@ export default function Planning() {
                   </button>
                 </div>
 
+                <button
+                  type="button"
+                  onClick={() => setShowStatusColors((previous) => !previous)}
+                  className={cn(
+                    "rounded-lg border px-3 py-1.5 text-xs font-medium transition-all duration-200",
+                    showStatusColors
+                      ? "border-amber-300 bg-gradient-to-br from-amber-200 to-orange-200 text-amber-950 shadow-[0_8px_20px_rgba(245,158,11,0.18)] hover:from-amber-200 hover:to-orange-300"
+                      : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                  )}
+                  title="Toggle planning status colors"
+                >
+                  Stat
+                </button>
+
                 <div className="flex items-center gap-2">
                   <button
                     className="px-3 py-1 rounded border bg-slate-900 text-white hover:bg-slate-800"
@@ -1090,6 +1305,16 @@ export default function Planning() {
             <div className="mb-3 text-xs text-slate-600 bg-slate-50 rounded-lg p-2">
               💡 <strong>Tips:</strong> Drag steps from job list to schedule them, or drag existing scheduled items to move them to different days/steps
             </div>
+
+            {showStatusColors && (
+              <div className="mb-3 flex animate-in fade-in-0 slide-in-from-top-1 flex-wrap items-center gap-2 rounded-lg border border-amber-200 bg-gradient-to-r from-amber-50 to-orange-50 px-3 py-2 text-xs text-slate-700 duration-200">
+                <span className="font-semibold text-slate-800">Status:</span>
+                <span className="inline-flex items-center gap-1 rounded-full bg-green-200 px-2 py-0.5 text-green-950">Done</span>
+                <span className="inline-flex items-center gap-1 rounded-full bg-amber-200 px-2 py-0.5 text-amber-950">Working</span>
+                <span className="inline-flex items-center gap-1 rounded-full bg-rose-200 px-2 py-0.5 text-rose-950">Delay</span>
+                <span className="inline-flex items-center gap-1 rounded-full bg-slate-200 px-2 py-0.5 text-slate-700">Pending</span>
+              </div>
+            )}
             
             <div className="relative min-w-0 max-w-full overflow-x-auto">
               <StepWeekGrid
@@ -1099,6 +1324,7 @@ export default function Planning() {
                 locatingPlanningId={locatingPlanningId}
                 viewMode={viewMode}
                 daysToShow={daysToShow}
+                showStatusColors={showStatusColors}
                 onAskQuantity={askQuantity}
                 onRemoveEvent={removeEvent}
                 onMoveEvent={moveEvent}
@@ -1505,11 +1731,14 @@ export default function Planning() {
                 onClick={handleAutoPlanAll}
                 disabled={!canEditPage || filteredJobsList.every(j => isJobComplete(j.id)) || isAutoPlanLoading}
                 className="flex items-center gap-2 px-3 py-2 rounded-lg bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 text-white text-sm font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                title="Generate auto plans for all incomplete jobs"
+                title="Auto Plan All uses AI only to prioritize jobs before backend creates the actual schedule"
               >
                 <Sparkles className={`h-4 w-4 ${isAutoPlanLoading ? 'animate-spin' : ''}`} />
                 {isAutoPlanLoading ? `Planning ${autoPlanTotalCount} jobs...` : 'Auto Plan All'}
               </button>
+            </div>
+            <div className="mb-3 rounded-md border border-violet-100 bg-violet-50 px-3 py-2 text-xs text-violet-900">
+              Auto Plan All ใช้ AI แค่จัดลำดับความสำคัญของ jobs ก่อน จากนั้น backend จะวางวันและจำนวนจริงตามกฎโรงงาน
             </div>
             <div className="mb-3 flex flex-wrap items-center gap-2">
               <div className="relative flex-1 min-w-[200px]">
@@ -1533,6 +1762,12 @@ export default function Planning() {
             {selectedPlanningRecord && (
               <div className="planning-records-locate-banner mb-3 rounded-lg border px-3 py-2 text-xs">
                 Locating {selectedPlanningRecord.jobStep?.job?.job_number} / {selectedPlanningRecord.jobStep?.step?.step_name} on {parseApiDate(selectedPlanningRecord.planned_date).toLocaleDateString('th-TH')}.
+                {isPlanningOverdue(selectedPlanningRecord.planned_date, selectedPlanningRecord.jobStep?.job?.end_date) && (
+                  <span className="ml-2 inline-flex items-center gap-1 text-red-600">
+                    <AlertTriangle className="h-3.5 w-3.5" />
+                    Over due date
+                  </span>
+                )}
                 Move the pointer to the highlighted cell in the planning grid to clear this marker.
               </div>
             )}
@@ -1593,8 +1828,22 @@ export default function Planning() {
                           locatingPlanningId === rec.planning_id && 'is-locating'
                         )}
                       >
-                        <td className="px-2 py-1 border">{rec.jobStep!.job!.job_number}</td>
-                        <td className="px-2 py-1 border">{rec.jobStep!.step!.step_name}</td>
+                        <td className="px-2 py-1 border">
+                          <span className="inline-flex items-center gap-2">
+                            {rec.jobStep!.job!.job_number}
+                            {newAutoPlanningIds.has(rec.planning_id) && (
+                              <NewItemBadge forceShow variant="square" className="ml-1" />
+                            )}
+                          </span>
+                        </td>
+                        <td className="px-2 py-1 border">
+                          <span className="inline-flex items-center gap-2">
+                            {rec.jobStep!.step!.step_name}
+                            {isPlanningOverdue(rec.planned_date, rec.jobStep?.job?.end_date) && (
+                              <AlertTriangle className="h-4 w-4 text-red-600" />
+                            )}
+                          </span>
+                        </td>
                         <td className="px-2 py-1 border">
                           {parseApiDate(rec.planned_date).toLocaleDateString('th-TH')}
                         </td>
@@ -1677,6 +1926,64 @@ export default function Planning() {
             }
           }
         `}</style>
+
+        <Dialog
+          open={clearPlanningDialog.open}
+          onOpenChange={(open) => {
+            if (isClearPlanningLoading) {
+              return;
+            }
+
+            setClearPlanningDialog({
+              open,
+              job: open ? clearPlanningDialog.job : null,
+            });
+          }}
+        >
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader className="space-y-3 text-left">
+              <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-rose-100 text-rose-600">
+                <AlertTriangle className="h-5 w-5" />
+              </div>
+              <div className="space-y-1">
+                <DialogTitle>Clear planning records</DialogTitle>
+                <DialogDescription>
+                  {clearPlanningDialog.job
+                    ? `ลบ planning ทั้งหมดของ ${clearPlanningDialog.job.id} ใช่หรือไม่?`
+                    : 'ยืนยันการลบ planning ทั้งหมดของ job นี้'}
+                </DialogDescription>
+              </div>
+            </DialogHeader>
+
+            {clearPlanningDialog.job && (
+              <div className="rounded-xl border border-rose-100 bg-rose-50/80 px-4 py-3 text-sm text-rose-900">
+                <div className="font-medium">{clearPlanningDialog.job.id}</div>
+                <div className="mt-1 text-xs text-rose-700">
+                  {clearPlanningCount} planning records will be removed from the grid and planning records list.
+                </div>
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2 pt-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setClearPlanningDialog({ open: false, job: null })}
+                disabled={isClearPlanningLoading}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                variant="destructive"
+                onClick={confirmClearJobPlanning}
+                disabled={isClearPlanningLoading || !clearPlanningDialog.job}
+              >
+                {isClearPlanningLoading ? 'Clearing...' : 'Clear Planning'}
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
 
         <Dialog
           open={autoPlanFeedback.open}

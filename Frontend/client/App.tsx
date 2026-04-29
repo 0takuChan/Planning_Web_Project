@@ -7,6 +7,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { AnimatePresence } from "framer-motion";
+import { motion, useReducedMotion } from "framer-motion";
 import Index from "./pages/Index";
 import NotFound from "./pages/NotFound";
 import Customers from "./pages/Customers";
@@ -21,12 +22,13 @@ import Transportation from "@/pages/Transportation";
 import TransportationDetail from "@/pages/TransportationDetail";
 import PageTransition from "@/components/layout/PageTransition";
 import { toast } from "@/hooks/use-toast";
+import { LoaderCircle } from "lucide-react";
 
 const queryClient = new QueryClient();
 
 import { isLoggedIn, getCurrentUserRole } from "./lib/auth";
 
-import React, { createContext, useContext, useMemo, useState, useEffect } from "react";
+import React, { createContext, useContext, useMemo, useState, useEffect, useRef } from "react";
 
 type RoleKey = "admin" | "planner" | "orderer" | "recorder" | string;
 
@@ -128,30 +130,93 @@ function withPageTransition(children: JSX.Element) {
   return <PageTransition>{children}</PageTransition>;
 }
 
-function AnimatedAppRoutes() {
-  const location = useLocation();
+function RouteLoadingOverlay({ active }: { active: boolean }) {
+  const reduceMotion = useReducedMotion();
 
   return (
-    <AnimatePresence mode="wait" initial={false}>
-      <Routes location={location} key={location.pathname}>
-        <Route path="/login" element={<PublicRoute>{withPageTransition(<Login />)}</PublicRoute>} />
-
-        <Route path="/" element={<RoleBasedRoute path="/">{withPageTransition(<Index />)}</RoleBasedRoute>} />
-        <Route path="/customers" element={<RoleBasedRoute path="/customers">{withPageTransition(<Customers />)}</RoleBasedRoute>} />
-        <Route path="/jobs" element={<RoleBasedRoute path="/jobs">{withPageTransition(<Jobs />)}</RoleBasedRoute>} />
-        <Route path="/planning" element={<RoleBasedRoute path="/planning">{withPageTransition(<Planning />)}</RoleBasedRoute>} />
-        <Route path="/add-data" element={<RoleBasedRoute path="/add-data">{withPageTransition(<AddData />)}</RoleBasedRoute>} />
-        <Route path="/summary" element={<RoleBasedRoute path="/summary">{withPageTransition(<Summary />)}</RoleBasedRoute>} />
-        <Route path="/steps" element={<RoleBasedRoute path="/steps">{withPageTransition(<Steps />)}</RoleBasedRoute>} />
-        <Route path="/transportation" element={<RoleBasedRoute path="/transportation">{withPageTransition(<Transportation />)}</RoleBasedRoute>} />
-        <Route
-          path="/transportation/:shipmentId"
-          element={<RoleBasedRoute path="/transportation">{withPageTransition(<TransportationDetail />)}</RoleBasedRoute>}
-        />
-        <Route path="/admin" element={<RoleBasedRoute path="/admin">{withPageTransition(<Admin />)}</RoleBasedRoute>} />
-        <Route path="*" element={withPageTransition(<NotFound />)} />
-      </Routes>
+    <AnimatePresence>
+      {active && (
+        <motion.div
+          className="route-loading-overlay"
+          initial={reduceMotion ? { opacity: 0 } : { opacity: 0, backdropFilter: "blur(0px)", backgroundPosition: "50% 0%" }}
+          animate={reduceMotion ? { opacity: 1 } : { opacity: 1, backdropFilter: "blur(10px)", backgroundPosition: "50% 100%" }}
+          exit={reduceMotion ? { opacity: 0 } : { opacity: 0, backdropFilter: "blur(0px)", backgroundPosition: "50% 0%" }}
+          transition={{ duration: reduceMotion ? 0.14 : 0.3, ease: [0.22, 1, 0.36, 1] }}
+        >
+          <motion.div
+            className="route-loading-card"
+            initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 18, scale: 0.965, rotateX: -8 }}
+            animate={reduceMotion ? { opacity: 1 } : { opacity: 1, y: 0, scale: 1, rotateX: 0 }}
+            exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -8, scale: 0.985, rotateX: 6 }}
+            transition={{ duration: reduceMotion ? 0.16 : 0.34, ease: [0.22, 1, 0.36, 1] }}
+          >
+            <span className="route-loading-spinner-wrap">
+              <span className="route-loading-spinner-ring" aria-hidden="true" />
+              <LoaderCircle className="route-loading-spinner" />
+            </span>
+            <div className="route-loading-text-block">
+              <div className="route-loading-title">Loading page</div>
+              <div className="route-loading-subtitle">Preparing the next screen...</div>
+              <div className="route-loading-progress-track" aria-hidden="true">
+                <motion.div
+                  className="route-loading-progress-bar"
+                  initial={reduceMotion ? { opacity: 1 } : { opacity: 0.7, scaleX: 0.28, x: "-24%" }}
+                  animate={reduceMotion ? { opacity: 1 } : { opacity: 1, scaleX: [0.28, 0.86, 0.42], x: ["-24%", "18%", "52%"] }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: reduceMotion ? 0.01 : 1.1, repeat: reduceMotion ? 0 : Infinity, ease: "easeInOut" }}
+                />
+              </div>
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
     </AnimatePresence>
+  );
+}
+
+function AnimatedAppRoutes() {
+  const location = useLocation();
+  const [isRouteLoading, setIsRouteLoading] = useState(false);
+  const isFirstRender = useRef(true);
+
+  useEffect(() => {
+    if (isFirstRender.current) {
+      isFirstRender.current = false;
+      return;
+    }
+
+    setIsRouteLoading(true);
+    const timer = window.setTimeout(() => {
+      setIsRouteLoading(false);
+    }, 520);
+
+    return () => window.clearTimeout(timer);
+  }, [location.pathname, location.search]);
+
+  return (
+    <>
+      <RouteLoadingOverlay active={isRouteLoading} />
+      <AnimatePresence mode="wait" initial={false}>
+        <Routes location={location} key={location.pathname}>
+          <Route path="/login" element={<PublicRoute>{withPageTransition(<Login />)}</PublicRoute>} />
+
+          <Route path="/" element={<RoleBasedRoute path="/">{withPageTransition(<Index />)}</RoleBasedRoute>} />
+          <Route path="/customers" element={<RoleBasedRoute path="/customers">{withPageTransition(<Customers />)}</RoleBasedRoute>} />
+          <Route path="/jobs" element={<RoleBasedRoute path="/jobs">{withPageTransition(<Jobs />)}</RoleBasedRoute>} />
+          <Route path="/planning" element={<RoleBasedRoute path="/planning">{withPageTransition(<Planning />)}</RoleBasedRoute>} />
+          <Route path="/add-data" element={<RoleBasedRoute path="/add-data">{withPageTransition(<AddData />)}</RoleBasedRoute>} />
+          <Route path="/summary" element={<RoleBasedRoute path="/summary">{withPageTransition(<Summary />)}</RoleBasedRoute>} />
+          <Route path="/steps" element={<RoleBasedRoute path="/steps">{withPageTransition(<Steps />)}</RoleBasedRoute>} />
+          <Route path="/transportation" element={<RoleBasedRoute path="/transportation">{withPageTransition(<Transportation />)}</RoleBasedRoute>} />
+          <Route
+            path="/transportation/:shipmentId"
+            element={<RoleBasedRoute path="/transportation">{withPageTransition(<TransportationDetail />)}</RoleBasedRoute>}
+          />
+          <Route path="/admin" element={<RoleBasedRoute path="/admin">{withPageTransition(<Admin />)}</RoleBasedRoute>} />
+          <Route path="*" element={withPageTransition(<NotFound />)} />
+        </Routes>
+      </AnimatePresence>
+    </>
   );
 }
 

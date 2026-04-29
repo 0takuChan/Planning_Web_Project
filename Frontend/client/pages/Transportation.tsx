@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import AppLayout from "@/components/layout/Sidebar";
-import { Plus, AlertCircle, Check, List, ArrowUpDown, Search } from "lucide-react";
+import { Plus, AlertCircle, Check, List, ArrowUpDown, Search, ChevronsUpDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -14,6 +14,15 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Select,
   SelectContent,
@@ -113,6 +122,7 @@ export default function Transportation() {
   const [customerSearch, setCustomerSearch] = useState("");
   const [isCustomerSearchFocused, setIsCustomerSearchFocused] = useState(false);
   const [selectedJobId, setSelectedJobId] = useState<number | null>(null);
+  const [jobPickerOpen, setJobPickerOpen] = useState(false);
   const [shipQuantity, setShipQuantity] = useState("");
   const [transportTypeId, setTransportTypeId] = useState<number | null>(null);
   const [statusId, setStatusId] = useState<number | null>(null);
@@ -212,6 +222,19 @@ export default function Transportation() {
     return jobs.filter((job) => job.customer_id === selectedCustomerId);
   }, [jobs, selectedCustomerId]);
 
+  const getCustomerDisplayLabel = (customerId: number) => {
+    const customer = customerMap.get(customerId);
+    if (!customer) {
+      return "";
+    }
+
+    return `${customer.customer_code} - ${customer.fullname}`;
+  };
+
+  const getJobDisplayLabel = (job: Job) => {
+    return `${job.job_number} - ${job.clothing_type}`;
+  };
+
   const filteredCustomers = useMemo(() => {
     const normalizedQuery = customerSearch.trim().toLowerCase();
 
@@ -289,6 +312,30 @@ export default function Transportation() {
     return jobSteps.filter((jobStep) => jobStep.job_id === selectedJobId);
   }, [jobSteps, selectedJobId]);
 
+  const jobOptions = useMemo(() => {
+    const sourceJobs = selectedCustomerId ? jobsForCustomer : jobs;
+
+    return sourceJobs.map((job) => {
+      const customer = customerMap.get(job.customer_id);
+
+      return {
+        job,
+        label: getJobDisplayLabel(job),
+        searchText: [
+          job.job_number,
+          job.clothing_type,
+          job.type_of_fabric,
+          customer?.fullname,
+          customer?.customer_code,
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase(),
+        customerName: customer?.fullname || job.customer?.fullname || "ไม่ระบุลูกค้า",
+      };
+    });
+  }, [customerMap, getJobDisplayLabel, jobs, jobsForCustomer, selectedCustomerId]);
+
   const selectedJob = useMemo(() => {
     if (!selectedJobId) {
       return null;
@@ -314,6 +361,20 @@ export default function Transportation() {
 
     return Math.max(selectedJob.total_quantity - shippedQuantityForSelectedJob, 0);
   }, [selectedJob, shippedQuantityForSelectedJob]);
+
+  const handleJobSelection = (jobId: number) => {
+    const job = jobs.find((entry) => entry.job_id === jobId);
+    if (!job) {
+      return;
+    }
+
+    setSelectedJobId(job.job_id);
+    setSelectedCustomerId(job.customer_id);
+    setCustomerSearch(getCustomerDisplayLabel(job.customer_id));
+    setShipQuantity("");
+    setErrorMessage(null);
+    setJobPickerOpen(false);
+  };
 
   useEffect(() => {
     if (!statusId && shipmentStatuses.length > 0) {
@@ -563,30 +624,58 @@ export default function Transportation() {
                     {/* Job Selection */}
                     <div className="space-y-2">
                       <Label htmlFor="job">รายการงานลูกค้า *</Label>
-                      <Select
-                        value={selectedJobId?.toString()}
-                        onValueChange={(value) => {
-                          setSelectedJobId(parseInt(value, 10));
-                        }}
-                        disabled={!selectedCustomerId}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="เลือกออเดอร์งาน" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {jobsForCustomer.map((job) => (
-                            <SelectItem
-                              key={job.job_id}
-                              value={job.job_id.toString()}
-                            >
-                              {job.job_number} - {job.clothing_type}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      {selectedCustomerId && jobsForCustomer.length === 0 && (
+                      <Popover open={jobPickerOpen} onOpenChange={setJobPickerOpen}>
+                        <PopoverTrigger asChild>
+                          <Button
+                            id="job"
+                            type="button"
+                            variant="outline"
+                            role="combobox"
+                            aria-expanded={jobPickerOpen}
+                            className="w-full justify-between font-normal"
+                            disabled={jobs.length === 0}
+                          >
+                            <span className="truncate">
+                              {selectedJob ? getJobDisplayLabel(selectedJob) : "ค้นหาและเลือกออเดอร์งาน"}
+                            </span>
+                            <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                          <Command>
+                            <CommandInput placeholder="ค้นหาเลขงาน ประเภทผ้า หรือชื่อลูกค้า" />
+                            <CommandList>
+                              <CommandEmpty>ไม่พบรายการงาน</CommandEmpty>
+                              <CommandGroup>
+                                {jobOptions.map(({ job, label, searchText, customerName }) => (
+                                  <CommandItem
+                                    key={job.job_id}
+                                    value={searchText}
+                                    onSelect={() => handleJobSelection(job.job_id)}
+                                    className="flex items-start gap-3 px-3 py-3"
+                                  >
+                                    <Check
+                                      className={`mt-0.5 h-4 w-4 shrink-0 ${selectedJobId === job.job_id ? "opacity-100" : "opacity-0"}`}
+                                    />
+                                    <div className="min-w-0 flex-1">
+                                      <div className="truncate font-medium text-slate-900">{label}</div>
+                                      <div className="truncate text-xs text-slate-500">
+                                        {customerName} • {job.type_of_fabric}
+                                      </div>
+                                    </div>
+                                  </CommandItem>
+                                ))}
+                              </CommandGroup>
+                            </CommandList>
+                          </Command>
+                        </PopoverContent>
+                      </Popover>
+                      {selectedCustomerId && jobsForCustomer.length === 0 && !selectedJobId && (
                         <p className="text-xs text-gray-500">ยังไม่มีออเดอร์ของลูกค้านี้</p>
                       )}
+                      <p className="text-xs text-gray-500">
+                        ค้นหา job ได้โดยตรง และเมื่อเลือก job ระบบจะใส่ชื่อลูกค้าให้อัตโนมัติ
+                      </p>
                       {selectedJob && remainingQuantityForSelectedJob !== null && (
                         <div className="rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-900">
                           <p>จำนวนในงานทั้งหมด: {selectedJob.total_quantity.toLocaleString()} ชิ้น</p>

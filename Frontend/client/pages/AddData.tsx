@@ -327,8 +327,6 @@ export default function AddData() {
           employeesRes.json()
         ]);
 
-        console.log("Fetched data:", { jobsData, jobStepsData, productionLogsData, employeesData });
-
         setJobs(jobsData);
         setJobSteps(jobStepsData);
         setProductionLogs(productionLogsData);
@@ -430,8 +428,6 @@ export default function AddData() {
         employee_id: currentEmployeeId,
       };
 
-      console.log("Creating production log:", payload);
-
       const response = await apiFetch("http://localhost:4000/api/productionlogs", {
         method: "POST",
         headers: {
@@ -447,7 +443,6 @@ export default function AddData() {
       }
 
       const newLog = await response.json();
-      console.log("Production log created:", newLog);
 
       // เพิ่มใน local state (ต้อง fetch ใหม่เพื่อให้ได้ข้อมูล include)
       // หรือ refresh data
@@ -493,8 +488,6 @@ export default function AddData() {
         quantity: Number(editDraft.quantity),
         employee_id: productionLogs[editIdx].employee_id, // เก็บ employee เดิม
       };
-
-      console.log("Updating production log:", payload);
 
       const response = await apiFetch(`http://localhost:4000/api/productionlogs/${logId}`, {
         method: "PUT",

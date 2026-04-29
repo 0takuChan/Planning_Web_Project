@@ -1,6 +1,7 @@
 import { Router, Request, Response } from "express";
 import { PrismaClient } from "@prisma/client";
 import {
+  BatchAutoPlanResult,
   BatchJobPlanningInput,
   BatchPlanningPair,
   generateAutoPlan,
@@ -12,6 +13,8 @@ import {
 const router = Router();
 const prisma = new PrismaClient();
 
+const debugLog = (..._args: unknown[]): void => {};
+
 function formatLocalDate(date: Date): string {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -19,20 +22,57 @@ function formatLocalDate(date: Date): string {
   return `${year}-${month}-${day}`;
 }
 
-function parseLocalDate(dateString: string): Date {
+function parseDateOnlyUtc(dateString: string): Date {
   const [year, month, day] = dateString.split("-").map(Number);
-  return new Date(year, month - 1, day);
+  return new Date(Date.UTC(year, month - 1, day));
 }
 
-function endOfLocalDate(dateString: string): Date {
+function endOfDateOnlyUtc(dateString: string): Date {
   const [year, month, day] = dateString.split("-").map(Number);
-  return new Date(year, month - 1, day, 23, 59, 59, 999);
+  return new Date(Date.UTC(year, month - 1, day, 23, 59, 59, 999));
+}
+
+function getNextDateString(dateString: string): string {
+  const current = parseDateOnlyUtc(dateString);
+  current.setUTCDate(current.getUTCDate() + 1);
+  return current.toISOString().slice(0, 10);
+}
+
+async function getUsedMinutesForStepOnDate(
+  stepId: number,
+  plannedDate: string
+): Promise<number> {
+  const plannings = await prisma.planning.findMany({
+    where: {
+      planned_date: {
+        gte: parseDateOnlyUtc(plannedDate),
+        lte: endOfDateOnlyUtc(plannedDate),
+      },
+      jobStep: {
+        step_id: stepId,
+      },
+    },
+    select: {
+      planned_quantity: true,
+      jobStep: {
+        select: {
+          minutes_per_unit: true,
+        },
+      },
+    },
+  });
+
+  return plannings.reduce((sum, planning) => {
+    const minutesPerUnit = planning.jobStep.minutes_per_unit || 0;
+    return sum + planning.planned_quantity * minutesPerUnit;
+  }, 0);
 }
 
 async function getExistingStepMinutesByDate(
   stepIds: number[],
   startDate: string,
-  endDate: string
+  endDate?: string,
+  excludeJobIds: number[] = []
 ): Promise<Record<string, number>> {
   if (!stepIds.length) {
     return {};
@@ -41,9 +81,16 @@ async function getExistingStepMinutesByDate(
   const plannings = await prisma.planning.findMany({
     where: {
       planned_date: {
-        gte: parseLocalDate(startDate),
-        lte: endOfLocalDate(endDate),
+        gte: parseDateOnlyUtc(startDate),
+        ...(endDate ? { lte: endOfDateOnlyUtc(endDate) } : {}),
       },
+      ...(excludeJobIds.length
+        ? {
+            job_id: {
+              notIn: excludeJobIds,
+            },
+          }
+        : {}),
       jobStep: {
         step_id: { in: stepIds },
       },
@@ -214,33 +261,143 @@ type PlanningCreateItem = {
   quantity: number;
 };
 
+type JobStepForAutoPlanCreate = {
+  job_step_id: number;
+  job_id: number;
+  step_id: number;
+  minutes_per_unit: number | null;
+  step: {
+    step_name: string;
+    standard_time: number;
+  };
+};
+
 async function createPlanningRecords(planningPairs: PlanningCreateItem[]) {
   const createdPlannings = [];
   let successCount = 0;
   let skippedCount = 0;
+  const jobStepCache = new Map<number, JobStepForAutoPlanCreate | null>();
 
   for (const pair of planningPairs) {
     try {
-      const plannedDate = new Date(pair.date);
-      console.log(
-        `  [AUTO-PLAN API] Creating Planning: job_id=${pair.job_id}, step_id=${pair.job_step_id}, date=${pair.date}, qty=${pair.quantity}`
-      );
+      let jobStep = jobStepCache.get(pair.job_step_id);
+      if (!jobStep) {
+        jobStep = await prisma.jobStep.findUnique({
+          where: { job_step_id: pair.job_step_id },
+          include: {
+            step: {
+              select: {
+                step_name: true,
+                standard_time: true,
+              },
+            },
+          },
+        });
+        jobStepCache.set(pair.job_step_id, jobStep);
+      }
 
-      const planning = await prisma.planning.create({
-        data: {
-          job_id: pair.job_id,
-          job_step_id: pair.job_step_id,
-          planned_date: plannedDate,
-          planned_quantity: pair.quantity,
-        },
-      });
+      if (!jobStep) {
+        throw new Error(`Job step ${pair.job_step_id} not found while creating auto-plan records`);
+      }
 
-      createdPlannings.push(planning);
-      successCount++;
-      console.log(`  [AUTO-PLAN API] ✓ Created planning_id=${planning.planning_id}`);
+      let remainingQuantity = pair.quantity;
+      let targetDate = pair.date;
+
+      while (remainingQuantity > 0) {
+        const plannedDate = parseDateOnlyUtc(targetDate);
+        debugLog(
+          `  [AUTO-PLAN API] Materializing Planning: job_id=${pair.job_id}, step_id=${pair.job_step_id}, date=${targetDate}, remaining_qty=${remainingQuantity}`
+        );
+
+        if (jobStep.minutes_per_unit && jobStep.minutes_per_unit > 0) {
+          const usedMinutes = await getUsedMinutesForStepOnDate(jobStep.step_id, targetDate);
+          const remainingMinutes = Math.max(0, jobStep.step.standard_time - usedMinutes);
+          const availableUnits = Math.floor(remainingMinutes / jobStep.minutes_per_unit);
+
+          if (availableUnits <= 0) {
+            debugLog(
+              `  [AUTO-PLAN API] Day ${targetDate} for step ${jobStep.step.step_name} is full (${usedMinutes}/${jobStep.step.standard_time} min). Moving to next available day.`
+            );
+            targetDate = getNextDateString(targetDate);
+            continue;
+          }
+
+          const quantityForDate = Math.min(remainingQuantity, availableUnits);
+          const existingSameDay = await prisma.planning.findFirst({
+            where: {
+              job_id: pair.job_id,
+              job_step_id: pair.job_step_id,
+              planned_date: plannedDate,
+            },
+          });
+
+          let planning;
+          if (existingSameDay) {
+            planning = await prisma.planning.update({
+              where: { planning_id: existingSameDay.planning_id },
+              data: {
+                planned_quantity: existingSameDay.planned_quantity + quantityForDate,
+              },
+            });
+          } else {
+            planning = await prisma.planning.create({
+              data: {
+                job_id: pair.job_id,
+                job_step_id: pair.job_step_id,
+                planned_date: plannedDate,
+                planned_quantity: quantityForDate,
+              },
+            });
+          }
+
+          createdPlannings.push(planning);
+          successCount++;
+          remainingQuantity -= quantityForDate;
+          debugLog(
+            `  [AUTO-PLAN API] ✓ Saved ${quantityForDate} units on ${targetDate} (${remainingMinutes} free min before save, max ${availableUnits} units)`
+          );
+
+          if (remainingQuantity > 0) {
+            targetDate = getNextDateString(targetDate);
+          }
+          continue;
+        }
+
+        const existingSameDay = await prisma.planning.findFirst({
+          where: {
+            job_id: pair.job_id,
+            job_step_id: pair.job_step_id,
+            planned_date: plannedDate,
+          },
+        });
+
+        let planning;
+        if (existingSameDay) {
+          planning = await prisma.planning.update({
+            where: { planning_id: existingSameDay.planning_id },
+            data: {
+              planned_quantity: existingSameDay.planned_quantity + remainingQuantity,
+            },
+          });
+        } else {
+          planning = await prisma.planning.create({
+            data: {
+              job_id: pair.job_id,
+              job_step_id: pair.job_step_id,
+              planned_date: plannedDate,
+              planned_quantity: remainingQuantity,
+            },
+          });
+        }
+
+        createdPlannings.push(planning);
+        successCount++;
+        debugLog(`  [AUTO-PLAN API] ✓ Created planning_id=${planning.planning_id}`);
+        remainingQuantity = 0;
+      }
     } catch (error: any) {
       if (error.code === "P2002") {
-        console.log(
+        debugLog(
           `  [AUTO-PLAN API] ⚠ Skipping duplicate planning: job_id=${pair.job_id}, job_step_id=${pair.job_step_id}, date=${pair.date}`
         );
         skippedCount++;
@@ -334,24 +491,7 @@ router.post("/auto-plan", async (req: Request, res: Response) => {
     const todayString = formatLocalDate(new Date());
     const stepIds = [...new Set(jobSteps.map((jobStep) => jobStep.step_id))];
 
-    const [existingJobPlannings, existingStepMinutesByDate] = await Promise.all([
-      prisma.planning.findMany({
-        where: { job_id },
-        select: {
-          job_step_id: true,
-          planned_quantity: true,
-        },
-      }),
-      getExistingStepMinutesByDate(stepIds, todayString, dueDateString),
-    ]);
-
-    const plannedQuantityByJobStep = new Map<number, number>();
-    for (const planning of existingJobPlannings) {
-      plannedQuantityByJobStep.set(
-        planning.job_step_id,
-        (plannedQuantityByJobStep.get(planning.job_step_id) || 0) + planning.planned_quantity
-      );
-    }
+    const existingStepMinutesByDate = await getExistingStepMinutesByDate(stepIds, todayString, undefined, [job_id]);
 
     const jobStepsWithRemaining: JobStepWithRemaining[] = jobSteps
       .map((js) => ({
@@ -360,7 +500,8 @@ router.post("/auto-plan", async (req: Request, res: Response) => {
         step_name: js.step.step_name,
         minutes_per_unit: js.minutes_per_unit || 0,
         standard_time: js.step.standard_time,
-        remaining_quantity: Math.max(0, job.total_quantity - (plannedQuantityByJobStep.get(js.job_step_id) || 0)),
+        priority: js.step.priority,
+        remaining_quantity: job.total_quantity,
       }))
       .filter((jobStep) => jobStep.remaining_quantity > 0);
 
@@ -372,14 +513,14 @@ router.post("/auto-plan", async (req: Request, res: Response) => {
     }
 
     // Call Gemini planning service
-    console.log("\n[AUTO-PLAN API] Calling generateAutoPlan service...");
+    debugLog("\n[AUTO-PLAN API] Calling generateAutoPlan service...");
     const planningPairs = await generateAutoPlan(
       job.job_number,
       dueDateString,
       jobStepsWithRemaining,
       existingStepMinutesByDate
     );
-    console.log(`[AUTO-PLAN API] Service returned ${planningPairs.length} planning pairs\n`);
+    debugLog(`[AUTO-PLAN API] Service returned ${planningPairs.length} planning pairs\n`);
 
     if (planningPairs.length === 0) {
       return res.status(400).json({
@@ -387,6 +528,11 @@ router.post("/auto-plan", async (req: Request, res: Response) => {
         message: "Gemini AI could not generate a valid production plan",
       });
     }
+
+    const clearedExistingPlans = await prisma.planning.deleteMany({
+      where: { job_id },
+    });
+    debugLog(`[AUTO-PLAN API] Cleared ${clearedExistingPlans.count} existing planning records for job ${job.job_number} before saving the regenerated plan`);
 
     const { createdPlannings, successCount, skippedCount } = await createPlanningRecords(
       planningPairs.map((pair: PlanningPair) => ({
@@ -397,7 +543,7 @@ router.post("/auto-plan", async (req: Request, res: Response) => {
       }))
     );
 
-    console.log(`[AUTO-PLAN API] SUCCESS: Created ${successCount} planning records for job ${job.job_number}\n`);
+    debugLog(`[AUTO-PLAN API] SUCCESS: Created ${successCount} planning records for job ${job.job_number}\n`);
     
     return res.status(200).json({
       success: true,
@@ -429,7 +575,7 @@ router.post("/auto-plan-batch", async (req: Request, res: Response) => {
     const uniqueJobIds = [...new Set(job_ids)];
     const todayString = formatLocalDate(new Date());
 
-    const [jobs, jobSteps, existingPlannings] = await Promise.all([
+    const [jobs, jobSteps] = await Promise.all([
       prisma.job.findMany({
         where: { job_id: { in: uniqueJobIds } },
         include: { customer: true },
@@ -437,14 +583,6 @@ router.post("/auto-plan-batch", async (req: Request, res: Response) => {
       prisma.jobStep.findMany({
         where: { job_id: { in: uniqueJobIds } },
         include: { step: true },
-      }),
-      prisma.planning.findMany({
-        where: { job_id: { in: uniqueJobIds } },
-        select: {
-          job_id: true,
-          job_step_id: true,
-          planned_quantity: true,
-        },
       }),
     ]);
 
@@ -462,16 +600,7 @@ router.post("/auto-plan-batch", async (req: Request, res: Response) => {
       const jobDate = formatLocalDate(job.end_date);
       return jobDate > latest ? jobDate : latest;
     }, todayString);
-    const existingStepMinutesByDate = await getExistingStepMinutesByDate(stepIds, todayString, maxDueDate);
-
-    const plannedQuantityByStep = new Map<string, number>();
-    for (const planning of existingPlannings) {
-      const key = `${planning.job_id}:${planning.job_step_id}`;
-      plannedQuantityByStep.set(
-        key,
-        (plannedQuantityByStep.get(key) || 0) + planning.planned_quantity
-      );
-    }
+    const existingStepMinutesByDate = await getExistingStepMinutesByDate(stepIds, todayString, undefined, uniqueJobIds);
 
     const failedJobs: string[] = [];
     const batchJobs: BatchJobPlanningInput[] = [];
@@ -499,14 +628,14 @@ router.post("/auto-plan-batch", async (req: Request, res: Response) => {
 
       const stepsWithRemaining: JobStepWithRemaining[] = stepsForJob
         .map((jobStep) => {
-          const plannedQuantity = plannedQuantityByStep.get(`${jobId}:${jobStep.job_step_id}`) || 0;
           return {
             job_step_id: jobStep.job_step_id,
             step_id: jobStep.step_id,
             step_name: jobStep.step.step_name,
             minutes_per_unit: jobStep.minutes_per_unit || 0,
             standard_time: jobStep.step.standard_time,
-            remaining_quantity: Math.max(0, job.total_quantity - plannedQuantity),
+            priority: jobStep.step.priority,
+            remaining_quantity: job.total_quantity,
           };
         })
         .filter((jobStep) => jobStep.remaining_quantity > 0);
@@ -540,9 +669,10 @@ router.post("/auto-plan-batch", async (req: Request, res: Response) => {
       return left.job_number.localeCompare(right.job_number);
     });
 
-    console.log(`\n[AUTO-PLAN BATCH API] Calling generateBatchAutoPlan service for ${batchJobs.length} jobs...`);
-    const planningPairs = await generateBatchAutoPlan(batchJobs, existingStepMinutesByDate);
-    console.log(`[AUTO-PLAN BATCH API] Service returned ${planningPairs.length} planning pairs\n`);
+    debugLog(`\n[AUTO-PLAN BATCH API] Calling generateBatchAutoPlan service for ${batchJobs.length} jobs...`);
+    const batchPlanResult: BatchAutoPlanResult = await generateBatchAutoPlan(batchJobs, existingStepMinutesByDate);
+    const planningPairs = batchPlanResult.planningPairs;
+    debugLog(`[AUTO-PLAN BATCH API] Service returned ${planningPairs.length} planning pairs\n`);
 
     const jobsWithPlans = new Set(planningPairs.map((pair) => pair.job_id));
     for (const batchJob of batchJobs) {
@@ -559,6 +689,15 @@ router.post("/auto-plan-batch", async (req: Request, res: Response) => {
       });
     }
 
+    const clearedExistingPlans = await prisma.planning.deleteMany({
+      where: {
+        job_id: {
+          in: batchJobs.map((job) => job.job_id),
+        },
+      },
+    });
+    debugLog(`[AUTO-PLAN BATCH API] Cleared ${clearedExistingPlans.count} existing planning records before saving regenerated batch plans`);
+
     const { createdPlannings, successCount, skippedCount } = await createPlanningRecords(
       planningPairs.map((pair: BatchPlanningPair) => ({
         job_id: pair.job_id,
@@ -568,7 +707,7 @@ router.post("/auto-plan-batch", async (req: Request, res: Response) => {
       }))
     );
 
-    console.log(
+    debugLog(
       `[AUTO-PLAN BATCH API] SUCCESS: Created ${successCount} planning records for ${jobsWithPlans.size}/${uniqueJobIds.length} jobs\n`
     );
 
@@ -581,6 +720,7 @@ router.post("/auto-plan-batch", async (req: Request, res: Response) => {
       jobCount: jobsWithPlans.size,
       failedJobs,
       plannings: createdPlannings,
+      priorityRecommendations: batchPlanResult.priorityRecommendations,
     });
   } catch (error: any) {
     console.error("[AUTO-PLAN BATCH API] ERROR:", error.message);
@@ -591,3 +731,4 @@ router.post("/auto-plan-batch", async (req: Request, res: Response) => {
 });
 
 export default router;
+

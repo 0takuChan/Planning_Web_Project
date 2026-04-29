@@ -69,9 +69,10 @@ model Job {
 }
 
 model Step {
-  step_id   Int    @id @default(autoincrement())
-  step_name String @unique @db.VarChar(50)
+  step_id       Int    @id @default(autoincrement())
+  step_name     String @unique @db.VarChar(50)
   standard_time Int
+  priority      Int    @default(1)
 
   jobSteps JobStep[]
   capacities StepCapacity[]

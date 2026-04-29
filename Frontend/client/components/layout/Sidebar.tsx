@@ -2,6 +2,7 @@ import { ReactNode, useState } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { Home, Users, Briefcase, Calendar as CalIcon, PlusSquare, ShieldCheck, LogOut, BarChart3, Settings, Truck } from "lucide-react";
 import { cn } from "@/lib/utils";
+import BrandLogo from "./BrandLogo";
 import { logout } from "@/lib/auth";
 import Navbar from "./Navbar";
 import "@/styles/layout.css";
@@ -45,13 +46,15 @@ export default function Sidebar({ children }: AppLayoutProps) {
           onMouseLeave={() => setIsCollapsed(true)}
         >
           <div className="p-4 w-full flex flex-col">
-            {!isCollapsed && (
-              <div className="mb-4">
-                <div className="h-10 rounded-xl bg-gradient-to-r from-[hsl(var(--brand-start))] to-[hsl(var(--brand-end))] text-white flex items-center justify-center font-bold tracking-wide">
-                  Main
+            <div className="mb-4 flex justify-center">
+              {isCollapsed ? (
+                <BrandLogo compact className="justify-center" />
+              ) : (
+                <div className="w-full rounded-2xl border border-slate-200/80 bg-slate-50/80 px-3 py-3 shadow-sm">
+                  <BrandLogo />
                 </div>
-              </div>
-            )}
+              )}
+            </div>
             <nav className="flex-1 space-y-1">
               {navItems.map(({ to, label, icon: Icon }) => {
                 const active = location.pathname === to || location.pathname.startsWith(`${to}/`);

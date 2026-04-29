@@ -117,8 +117,6 @@ export default function Summary() {
         const jobStepsData: JobStep[] = await jobStepsRes.json();
         const logsData: ProductionLog[] = await logsRes.json();
 
-        console.log('Production Logs:', logsData);
-
         setJobs(jobsData);
         setJobSteps(jobStepsData);
         setProductionLogs(logsData);

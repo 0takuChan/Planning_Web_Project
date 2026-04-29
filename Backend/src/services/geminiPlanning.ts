@@ -4,6 +4,7 @@ export interface JobStepWithCapacity {
   step_name: string;
   minutes_per_unit: number | null;
   standard_time: number; // minutes available per day
+  priority: number;
 }
 
 type ExistingStepMinutesByDate = Record<string, number>;
@@ -30,7 +31,42 @@ export interface BatchPlanningPair extends PlanningPair {
   job_id: number;
 }
 
+interface BatchJobPriorityRecommendation {
+  job_id: number;
+  priority: number;
+  reason?: string;
+}
+
+export interface BatchPriorityRecommendationResult {
+  job_id: number;
+  job_number: string;
+  priority: number | null;
+  reason: string;
+}
+
+export interface BatchAutoPlanResult {
+  planningPairs: BatchPlanningPair[];
+  priorityRecommendations: BatchPriorityRecommendationResult[];
+}
+
 type AiProvider = "gemini" | "groq";
+
+const debugLog = (..._args: unknown[]): void => {};
+
+function sortStepsByPriority<T extends { priority: number; step_name: string; job_step_id: number }>(steps: T[]): T[] {
+  return [...steps].sort((left, right) => {
+    if (left.priority !== right.priority) {
+      return left.priority - right.priority;
+    }
+
+    const nameComparison = left.step_name.localeCompare(right.step_name);
+    if (nameComparison !== 0) {
+      return nameComparison;
+    }
+
+    return left.job_step_id - right.job_step_id;
+  });
+}
 
 function formatLocalDate(date: Date): string {
   const year = date.getFullYear();
@@ -44,26 +80,40 @@ function parseLocalDate(dateString: string): Date {
   return new Date(year, month - 1, day);
 }
 
-function isWeekday(dateString: string): boolean {
+function isPreferredWorkingDay(dateString: string): boolean {
   const day = parseLocalDate(dateString).getDay();
   return day !== 0 && day !== 6;
 }
 
-function getWeekdayDateStrings(startDate: string, endDate: string): string[] {
+function getDateStringsInRange(startDate: string, endDate: string): string[] {
   const dates: string[] = [];
   const current = parseLocalDate(startDate);
   const end = parseLocalDate(endDate);
 
   while (current <= end) {
-    const currentString = formatLocalDate(current);
-    if (isWeekday(currentString)) {
-      dates.push(currentString);
-    }
-
+    dates.push(formatLocalDate(current));
     current.setDate(current.getDate() + 1);
   }
 
   return dates;
+}
+
+function getPreferredWorkingDateStrings(startDate: string, endDate: string): string[] {
+  return getDateStringsInRange(startDate, endDate).filter(isPreferredWorkingDay);
+}
+
+function getWeekendDateStrings(startDate: string, endDate: string): string[] {
+  return getDateStringsInRange(startDate, endDate).filter((dateString) => !isPreferredWorkingDay(dateString));
+}
+
+function getNextDateString(dateString: string): string {
+  const current = parseLocalDate(dateString);
+  current.setDate(current.getDate() + 1);
+  return formatLocalDate(current);
+}
+
+function getLaterDateString(left: string, right: string): string {
+  return left >= right ? left : right;
 }
 
 // Helper function: Sleep for milliseconds
@@ -307,7 +357,7 @@ async function retryFetch(
 
         const waitSeconds = extractRetryDelaySeconds(errorData, provider);
 
-        console.log(`[${providerName} Attempt ${attempt + 1}/${maxRetries + 1}] Rate limited. Waiting ${waitSeconds}s before retry...`);
+        debugLog(`[${providerName} Attempt ${attempt + 1}/${maxRetries + 1}] Rate limited. Waiting ${waitSeconds}s before retry...`);
 
         if (attempt < maxRetries) {
           await sleep(waitSeconds * 1000);
@@ -340,7 +390,7 @@ async function retryFetch(
 
         lastError = new Error(errorMessage);
         
-        console.log(`[${providerName} Attempt ${attempt + 1}/${maxRetries + 1}] API returned ${response.status}. ${attempt < maxRetries ? 'Retrying...' : 'Max retries reached.'}`);
+        debugLog(`[${providerName} Attempt ${attempt + 1}/${maxRetries + 1}] API returned ${response.status}. ${attempt < maxRetries ? 'Retrying...' : 'Max retries reached.'}`);
         
         if (attempt < maxRetries) {
           const waitMs = Math.pow(2, attempt) * 1000; // 1s, 2s, 4s, 8s...
@@ -362,7 +412,7 @@ async function retryFetch(
       
       if (attempt < maxRetries) {
         const waitMs = Math.pow(2, attempt) * 1000;
-        console.log(`[${providerName} Attempt ${attempt + 1}/${maxRetries + 1}] Error occurred. Waiting ${waitMs}ms before retry...`);
+        debugLog(`[${providerName} Attempt ${attempt + 1}/${maxRetries + 1}] Error occurred. Waiting ${waitMs}ms before retry...`);
         await sleep(waitMs);
         continue;
       } else {
@@ -384,7 +434,7 @@ async function callAiTextResponse(
 
   if (provider === "groq") {
     const apiUrl = "https://api.groq.com/openai/v1/chat/completions";
-    console.log(`Calling ${providerName} API at: ${apiUrl}`);
+    debugLog(`Calling ${providerName} API at: ${apiUrl}`);
 
     const response = await retryFetch(
       apiUrl,
@@ -414,13 +464,13 @@ async function callAiTextResponse(
     );
 
     const result = await response.json();
-    console.log(`\n${providerName} API Response Status: SUCCESS (${requestLabel})`);
-    console.log("Full Response:");
-    console.log(JSON.stringify(result, null, 2));
+    debugLog(`\n${providerName} API Response Status: SUCCESS (${requestLabel})`);
+    debugLog("Full Response:");
+    debugLog(JSON.stringify(result, null, 2));
 
     const responseText = result?.choices?.[0]?.message?.content;
     if (!responseText || typeof responseText !== "string") {
-      console.log(`ERROR: Invalid ${providerName} response structure`);
+      debugLog(`ERROR: Invalid ${providerName} response structure`);
       throw new Error(`Invalid ${providerName} API response structure`);
     }
 
@@ -428,7 +478,7 @@ async function callAiTextResponse(
   }
 
   const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
-  console.log(`Calling ${providerName} API at: ${apiUrl.replace(apiKey, "REDACTED")}`);
+  debugLog(`Calling ${providerName} API at: ${apiUrl.replace(apiKey, "REDACTED")}`);
 
   const response = await retryFetch(
     apiUrl,
@@ -454,13 +504,13 @@ async function callAiTextResponse(
   );
 
   const result = await response.json();
-  console.log(`\n${providerName} API Response Status: SUCCESS (${requestLabel})`);
-  console.log("Full Response:");
-  console.log(JSON.stringify(result, null, 2));
+  debugLog(`\n${providerName} API Response Status: SUCCESS (${requestLabel})`);
+  debugLog("Full Response:");
+  debugLog(JSON.stringify(result, null, 2));
 
   const responseText = result?.candidates?.[0]?.content?.parts?.[0]?.text;
   if (!responseText || typeof responseText !== "string") {
-    console.log(`ERROR: Invalid ${providerName} response structure`);
+    debugLog(`ERROR: Invalid ${providerName} response structure`);
     throw new Error(`Invalid ${providerName} API response structure`);
   }
 
@@ -546,6 +596,204 @@ function addStepMinutesUsage(
   usageMap.set(key, (usageMap.get(key) || 0) + minutesToAdd);
 }
 
+function getImmediatePredecessorSteps<T extends { priority: number }>(
+  currentStep: T,
+  allSteps: T[]
+): T[] {
+  const previousPriority = allSteps.reduce((highestLowerPriority, step) => {
+    if (step.priority >= currentStep.priority) {
+      return highestLowerPriority;
+    }
+
+    return Math.max(highestLowerPriority, step.priority);
+  }, Number.NEGATIVE_INFINITY);
+
+  if (!Number.isFinite(previousPriority)) {
+    return [];
+  }
+
+  return allSteps.filter((step) => step.priority === previousPriority);
+}
+
+function getCumulativeAllocatedQuantity<T extends { job_step_id: number }>(
+  allocationMap: Map<string, number>,
+  currentStep: T,
+  productionDates: string[],
+  targetDate: string,
+  includeTargetDate: boolean,
+  keyBuilder: (step: T, date: string) => string
+): number {
+  return productionDates.reduce((sum, date) => {
+    if (includeTargetDate ? date > targetDate : date >= targetDate) {
+      return sum;
+    }
+
+    return sum + (allocationMap.get(keyBuilder(currentStep, date)) || 0);
+  }, 0);
+}
+
+function getPrecedenceAllowanceForDate<
+  T extends { job_step_id: number; priority: number; remaining_quantity: number }
+>(
+  currentStep: T,
+  allSteps: T[],
+  allocationMap: Map<string, number>,
+  productionDates: string[],
+  targetDate: string,
+  keyBuilder: (step: T, date: string) => string
+): number {
+  const predecessorSteps = getImmediatePredecessorSteps(currentStep, allSteps);
+  if (predecessorSteps.length === 0) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  const currentAllocatedBeforeDate = getCumulativeAllocatedQuantity(
+    allocationMap,
+    currentStep,
+    productionDates,
+    targetDate,
+    false,
+    keyBuilder
+  );
+
+  const predecessorCompletionLimit = predecessorSteps.reduce((minimumAllowed, predecessorStep) => {
+    const predecessorAllocatedBeforeDate = getCumulativeAllocatedQuantity(
+      allocationMap,
+      predecessorStep,
+      productionDates,
+      targetDate,
+      false,
+      keyBuilder
+    );
+
+    const completedBufferFromExistingPlans = currentStep.remaining_quantity - predecessorStep.remaining_quantity;
+    return Math.min(minimumAllowed, completedBufferFromExistingPlans + predecessorAllocatedBeforeDate);
+  }, Number.POSITIVE_INFINITY);
+
+  return Math.max(0, predecessorCompletionLimit - currentAllocatedBeforeDate);
+}
+
+function extendProductionDatesUntilPlanned<
+  T extends {
+    job_step_id: number;
+    step_id: number;
+    step_name: string;
+    minutes_per_unit: number;
+    standard_time: number;
+    priority: number;
+    remaining_quantity: number;
+  }
+>(
+  currentStep: T,
+  allSteps: T[],
+  allocationMap: Map<string, number>,
+  usedMinutesMap: Map<string, number>,
+  allocatedByJobStep: Map<number, number>,
+  productionDates: string[],
+  remaining: number,
+  extensionStartDate: string,
+  keyBuilder: (step: T, date: string) => string,
+  logLabel: string
+): number {
+  let unresolved = remaining;
+  let anchorDate = productionDates[productionDates.length - 1] || "";
+  let extraDays = 0;
+
+  while (unresolved > 0 && extraDays < 365) {
+    const nextDate = anchorDate
+      ? getNextDateString(anchorDate)
+      : extensionStartDate;
+    anchorDate = nextDate;
+    productionDates.push(nextDate);
+    extraDays += 1;
+
+    const availableCapacity = getAvailableUnitsForDate(currentStep, nextDate, usedMinutesMap);
+    const usedMinutes = getUsedMinutesForStepOnDate(usedMinutesMap, currentStep.step_id, nextDate);
+    const remainingMinutes = Math.max(0, currentStep.standard_time - usedMinutes);
+    const precedenceAllowance = getPrecedenceAllowanceForDate(
+      currentStep,
+      allSteps,
+      allocationMap,
+      productionDates,
+      nextDate,
+      keyBuilder
+    );
+
+    if (availableCapacity <= 0 || precedenceAllowance <= 0) {
+      debugLog(`${logLabel} ${nextDate}: extended beyond due date with ${remainingMinutes}/${currentStep.standard_time} minutes free, can place ${availableCapacity} units, predecessor allows ${precedenceAllowance}`);
+      continue;
+    }
+
+    const allocationKey = keyBuilder(currentStep, nextDate);
+    const addedQuantity = Math.min(unresolved, availableCapacity, precedenceAllowance);
+    const currentQuantity = allocationMap.get(allocationKey) || 0;
+    allocationMap.set(allocationKey, currentQuantity + addedQuantity);
+    addStepMinutesUsage(usedMinutesMap, currentStep.step_id, nextDate, addedQuantity * currentStep.minutes_per_unit);
+    allocatedByJobStep.set(currentStep.job_step_id, (allocatedByJobStep.get(currentStep.job_step_id) || 0) + addedQuantity);
+    unresolved -= addedQuantity;
+
+    debugLog(`${logLabel} ${nextDate}: added ${addedQuantity} after due date, free minutes ${remainingMinutes}, max units today ${availableCapacity}, day total ${currentQuantity + addedQuantity}, remaining ${unresolved}`);
+  }
+
+  return unresolved;
+}
+
+function extendBatchProductionDatesUntilPlanned(
+  jobId: number,
+  jobNumber: string,
+  currentStep: JobStepWithRemaining & { minutes_per_unit: number },
+  allSteps: JobStepWithRemaining[],
+  allocationMap: Map<string, number>,
+  usedMinutesMap: Map<string, number>,
+  allocatedByJobStep: Map<string, number>,
+  productionDates: string[],
+  remaining: number,
+  extensionStartDate: string,
+): number {
+  let unresolved = remaining;
+  let anchorDate = productionDates[productionDates.length - 1] || "";
+  let extraDays = 0;
+
+  while (unresolved > 0 && extraDays < 365) {
+    const nextDate = anchorDate
+      ? getNextDateString(anchorDate)
+      : extensionStartDate;
+    anchorDate = nextDate;
+    productionDates.push(nextDate);
+    extraDays += 1;
+
+    const availableCapacity = getAvailableUnitsForDate(currentStep, nextDate, usedMinutesMap);
+    const usedMinutes = getUsedMinutesForStepOnDate(usedMinutesMap, currentStep.step_id, nextDate);
+    const remainingMinutes = Math.max(0, currentStep.standard_time - usedMinutes);
+    const precedenceAllowance = getPrecedenceAllowanceForDate(
+      currentStep,
+      allSteps,
+      allocationMap,
+      productionDates,
+      nextDate,
+      (step, date) => `${jobId}:${step.job_step_id}:${date}`
+    );
+
+    if (availableCapacity <= 0 || precedenceAllowance <= 0) {
+      debugLog(`[AUTO-PLAN BATCH DEBUG] Job ${jobNumber} step ${currentStep.step_name} ${nextDate}: extended beyond due date with ${remainingMinutes}/${currentStep.standard_time} minutes free, can place ${availableCapacity} units, predecessor allows ${precedenceAllowance}`);
+      continue;
+    }
+
+    const allocationKey = `${jobId}:${currentStep.job_step_id}:${nextDate}`;
+    const addedQuantity = Math.min(unresolved, availableCapacity, precedenceAllowance);
+    const currentQuantity = allocationMap.get(allocationKey) || 0;
+    allocationMap.set(allocationKey, currentQuantity + addedQuantity);
+    addStepMinutesUsage(usedMinutesMap, currentStep.step_id, nextDate, addedQuantity * currentStep.minutes_per_unit);
+    const stepAllocationKey = `${jobId}:${currentStep.job_step_id}`;
+    allocatedByJobStep.set(stepAllocationKey, (allocatedByJobStep.get(stepAllocationKey) || 0) + addedQuantity);
+    unresolved -= addedQuantity;
+
+    debugLog(`[AUTO-PLAN BATCH DEBUG] Job ${jobNumber} step ${currentStep.step_name} ${nextDate}: added ${addedQuantity} after due date, free minutes ${remainingMinutes}, max units today ${availableCapacity}, day total ${currentQuantity + addedQuantity}, remaining ${unresolved}`);
+  }
+
+  return unresolved;
+}
+
 function rebalanceSingleStepSingletonDays(
   allocationMap: Map<string, number>,
   usedMinutesMap: Map<string, number>,
@@ -555,6 +803,7 @@ function rebalanceSingleStepSingletonDays(
     step_name: string;
     minutes_per_unit: number;
     standard_time: number;
+    priority: number;
     remaining_quantity: number;
   }>,
   productionDates: string[]
@@ -570,7 +819,7 @@ function rebalanceSingleStepSingletonDays(
 
       const targetDates = productionDates
         .filter((date) => {
-          if (date === sourceDate) {
+          if (date <= sourceDate) {
             return false;
           }
 
@@ -600,7 +849,7 @@ function rebalanceSingleStepSingletonDays(
         addStepMinutesUsage(usedMinutesMap, step.step_id, sourceDate, -step.minutes_per_unit);
         addStepMinutesUsage(usedMinutesMap, step.step_id, targetDate, step.minutes_per_unit);
 
-        console.log(
+        debugLog(
           `[AUTO-PLAN DEBUG] Step ${step.step_name}: moved 1 unit from ${sourceDate} to ${targetDate} to avoid a singleton production day`
         );
         break;
@@ -616,7 +865,7 @@ function rebalanceBatchStepSingletonDays(
   todayString: string
 ): void {
   for (const job of jobs) {
-    const productionDates = getWeekdayDateStrings(todayString, job.due_date);
+    const productionDates = getPreferredWorkingDateStrings(todayString, job.due_date);
 
     for (const step of job.job_steps.filter((item) => item.minutes_per_unit && item.minutes_per_unit > 0)) {
       const normalizedStep = {
@@ -634,7 +883,7 @@ function rebalanceBatchStepSingletonDays(
 
         const targetDates = productionDates
           .filter((date) => {
-            if (date === sourceDate) {
+            if (date <= sourceDate) {
               return false;
             }
 
@@ -664,7 +913,7 @@ function rebalanceBatchStepSingletonDays(
           addStepMinutesUsage(usedMinutesMap, step.step_id, sourceDate, -normalizedStep.minutes_per_unit);
           addStepMinutesUsage(usedMinutesMap, step.step_id, targetDate, normalizedStep.minutes_per_unit);
 
-          console.log(
+          debugLog(
             `[AUTO-PLAN BATCH DEBUG] Job ${job.job_number} step ${step.step_name}: moved 1 unit from ${sourceDate} to ${targetDate} to avoid a singleton production day`
           );
           break;
@@ -682,6 +931,7 @@ function ensureSingleStepCoverage(
     step_name: string;
     minutes_per_unit: number;
     standard_time: number;
+    priority: number;
     remaining_quantity: number;
   }>,
   todayString: string,
@@ -693,8 +943,25 @@ function ensureSingleStepCoverage(
   const usedMinutesMap = new Map<string, number>(Object.entries(existingStepMinutesByDate));
   const stepByJobStepId = new Map(stepCapacities.map((step) => [step.job_step_id, step]));
   const allocatedByJobStep = new Map<number, number>();
+  const beforeDueDates = getPreferredWorkingDateStrings(todayString, dueDate);
+  const weekendDatesBeforeDue = getWeekendDateStrings(todayString, dueDate);
+  const productionDates = [...beforeDueDates];
 
-  for (const plan of mergedPlans) {
+  const sortedMergedPlans = [...mergedPlans].sort((left, right) => {
+    if (left.date !== right.date) {
+      return left.date.localeCompare(right.date);
+    }
+
+    const leftPriority = stepByJobStepId.get(left.job_step_id)?.priority ?? Number.MAX_SAFE_INTEGER;
+    const rightPriority = stepByJobStepId.get(right.job_step_id)?.priority ?? Number.MAX_SAFE_INTEGER;
+    if (leftPriority !== rightPriority) {
+      return leftPriority - rightPriority;
+    }
+
+    return left.job_step_id - right.job_step_id;
+  });
+
+  for (const plan of sortedMergedPlans) {
     const step = stepByJobStepId.get(plan.job_step_id);
     if (!step) {
       continue;
@@ -703,18 +970,26 @@ function ensureSingleStepCoverage(
     const availableUnits = getAvailableUnitsForDate(step, plan.date, usedMinutesMap);
     const alreadyAllocated = allocatedByJobStep.get(plan.job_step_id) || 0;
     const remainingAllowed = Math.max(0, step.remaining_quantity - alreadyAllocated);
-    const adjustedQuantity = Math.min(plan.quantity, availableUnits, remainingAllowed);
+    const precedenceAllowance = getPrecedenceAllowanceForDate(
+      step,
+      stepCapacities,
+      allocationMap,
+      productionDates,
+      plan.date,
+      (currentStep, date) => `${currentStep.job_step_id}:${date}`
+    );
+    const adjustedQuantity = Math.min(plan.quantity, availableUnits, remainingAllowed, precedenceAllowance);
 
     if (adjustedQuantity <= 0) {
-      console.log(
-        `[AUTO-PLAN DEBUG] Step ${step.step_name} ${plan.date}: AI allocation skipped because no shared capacity remains (${getUsedMinutesForStepOnDate(usedMinutesMap, step.step_id, plan.date)}/${step.standard_time} min already used)`
+      debugLog(
+        `[AUTO-PLAN DEBUG] Step ${step.step_name} ${plan.date}: AI allocation skipped because no shared capacity or predecessor output is available`
       );
       continue;
     }
 
     if (adjustedQuantity !== plan.quantity) {
-      console.log(
-        `[AUTO-PLAN DEBUG] Step ${step.step_name} ${plan.date}: AI allocation adjusted from ${plan.quantity} to ${adjustedQuantity} due to remaining shared capacity`
+      debugLog(
+        `[AUTO-PLAN DEBUG] Step ${step.step_name} ${plan.date}: AI allocation adjusted from ${plan.quantity} to ${adjustedQuantity} due to shared capacity or predecessor handoff limits`
       );
     }
 
@@ -723,16 +998,14 @@ function ensureSingleStepCoverage(
     addStepMinutesUsage(usedMinutesMap, step.step_id, plan.date, adjustedQuantity * step.minutes_per_unit);
   }
 
-  const productionDates = getWeekdayDateStrings(todayString, dueDate);
-
-  console.log("[AUTO-PLAN DEBUG] Working dates considered:", productionDates.join(", "));
+  debugLog("[AUTO-PLAN DEBUG] Working dates considered:", productionDates.join(", "));
 
   for (const step of stepCapacities) {
-    const maxPossibleBeforeDueDate = productionDates.reduce(
+    const maxPossibleBeforeDueDate = beforeDueDates.reduce(
       (sum, date) => sum + getAvailableUnitsForDate(step, date, usedMinutesMap),
       0
     ) + (allocatedByJobStep.get(step.job_step_id) || 0);
-    console.log(
+    debugLog(
       `[AUTO-PLAN DEBUG] Step ${step.step_name} (${step.job_step_id}) capacity: ${step.standard_time} min/day, ${step.minutes_per_unit} min/unit, max ${maxPossibleBeforeDueDate} units before ${dueDate}`
     );
 
@@ -740,7 +1013,7 @@ function ensureSingleStepCoverage(
       date,
       quantity: allocationMap.get(`${step.job_step_id}:${date}`) || 0,
     }));
-    console.log(
+    debugLog(
       `[AUTO-PLAN DEBUG] Step ${step.step_name} initial allocations: ${initialAllocations
         .map((entry) => `${entry.date}=${entry.quantity}`)
         .join(", ")}`
@@ -749,7 +1022,7 @@ function ensureSingleStepCoverage(
     const allocated = allocatedByJobStep.get(step.job_step_id) || 0;
 
     let remaining = step.remaining_quantity - allocated;
-    console.log(
+    debugLog(
       `[AUTO-PLAN DEBUG] Step ${step.step_name} allocated ${allocated}/${step.remaining_quantity}, remaining ${remaining}`
     );
 
@@ -761,21 +1034,89 @@ function ensureSingleStepCoverage(
       const key = `${step.job_step_id}:${date}`;
       const usedMinutes = getUsedMinutesForStepOnDate(usedMinutesMap, step.step_id, date);
       const availableCapacity = getAvailableUnitsForDate(step, date, usedMinutesMap);
+      const precedenceAllowance = getPrecedenceAllowanceForDate(
+        step,
+        stepCapacities,
+        allocationMap,
+        productionDates,
+        date,
+        (currentStep, currentDate) => `${currentStep.job_step_id}:${currentDate}`
+      );
       if (availableCapacity <= 0) {
-        console.log(
+        debugLog(
           `[AUTO-PLAN DEBUG] Step ${step.step_name} ${date}: no free shared capacity left (${usedMinutes}/${step.standard_time} min used)`
         );
         continue;
       }
 
-      const addedQuantity = Math.min(remaining, availableCapacity);
+      if (precedenceAllowance <= 0) {
+        debugLog(
+          `[AUTO-PLAN DEBUG] Step ${step.step_name} ${date}: waiting for predecessor steps to finish enough quantity before handing off more work`
+        );
+        continue;
+      }
+
+      const addedQuantity = Math.min(remaining, availableCapacity, precedenceAllowance);
       const currentQuantity = allocationMap.get(key) || 0;
       allocationMap.set(key, currentQuantity + addedQuantity);
       addStepMinutesUsage(usedMinutesMap, step.step_id, date, addedQuantity * step.minutes_per_unit);
       allocatedByJobStep.set(step.job_step_id, (allocatedByJobStep.get(step.job_step_id) || 0) + addedQuantity);
       remaining -= addedQuantity;
-      console.log(
+      debugLog(
         `[AUTO-PLAN DEBUG] Step ${step.step_name} ${date}: added ${addedQuantity}, day total ${currentQuantity + addedQuantity}, remaining ${remaining}`
+      );
+    }
+
+    for (const date of weekendDatesBeforeDue) {
+      if (remaining <= 0) {
+        break;
+      }
+
+      if (!productionDates.includes(date)) {
+        productionDates.push(date);
+      }
+
+      const key = `${step.job_step_id}:${date}`;
+      const availableCapacity = getAvailableUnitsForDate(step, date, usedMinutesMap);
+      const precedenceAllowance = getPrecedenceAllowanceForDate(
+        step,
+        stepCapacities,
+        allocationMap,
+        productionDates,
+        date,
+        (currentStep, currentDate) => `${currentStep.job_step_id}:${currentDate}`
+      );
+
+      if (availableCapacity <= 0 || precedenceAllowance <= 0) {
+        continue;
+      }
+
+      const addedQuantity = Math.min(remaining, availableCapacity, precedenceAllowance);
+      const currentQuantity = allocationMap.get(key) || 0;
+      allocationMap.set(key, currentQuantity + addedQuantity);
+      addStepMinutesUsage(usedMinutesMap, step.step_id, date, addedQuantity * step.minutes_per_unit);
+      allocatedByJobStep.set(step.job_step_id, (allocatedByJobStep.get(step.job_step_id) || 0) + addedQuantity);
+      remaining -= addedQuantity;
+      debugLog(
+        `[AUTO-PLAN DEBUG] Step ${step.step_name} ${date}: weekend fallback added ${addedQuantity}, day total ${currentQuantity + addedQuantity}, remaining ${remaining}`
+      );
+    }
+
+    if (remaining > 0) {
+      debugLog(
+        `[AUTO-PLAN DEBUG] Step ${step.step_name}: due-date capacity exhausted, extending planning beyond ${dueDate}`
+      );
+      remaining = extendProductionDatesUntilPlanned(
+        step,
+        stepCapacities,
+        allocationMap,
+        usedMinutesMap,
+        allocatedByJobStep,
+        productionDates,
+        remaining,
+        getLaterDateString(todayString, dueDate),
+        (currentStep, currentDate) => `${currentStep.job_step_id}:${currentDate}`,
+        `[AUTO-PLAN DEBUG] Step ${step.step_name}`
       );
     }
 
@@ -783,7 +1124,7 @@ function ensureSingleStepCoverage(
       date,
       quantity: allocationMap.get(`${step.job_step_id}:${date}`) || 0,
     }));
-    console.log(
+    debugLog(
       `[AUTO-PLAN DEBUG] Step ${step.step_name} final allocations: ${finalAllocations
         .map((entry) => `${entry.date}=${entry.quantity}`)
         .join(", ")}`
@@ -791,7 +1132,7 @@ function ensureSingleStepCoverage(
 
     if (remaining > 0) {
       throw new Error(
-        `Unable to create a complete plan for step ${step.step_name}. Missing ${remaining} units before due date ${dueDate}. Shared step capacity is already partly used on those days, and the maximum possible before due date is ${maxPossibleBeforeDueDate} units.`
+        `Unable to create a complete plan for step ${step.step_name}. Missing ${remaining} units even after extending beyond due date ${dueDate}. Shared step capacity and predecessor constraints do not allow enough output, and the maximum possible before due date is ${maxPossibleBeforeDueDate} units.`
       );
     }
   }
@@ -826,6 +1167,7 @@ function ensureBatchStepCoverage(
   const allocationMap = new Map<string, number>();
   const usedMinutesMap = new Map<string, number>(Object.entries(existingStepMinutesByDate));
   const allocatedByJobStep = new Map<string, number>();
+  const overdueRemainingByJobStep = new Map<string, number>();
 
   const stepMap = new Map(
     jobs.flatMap((job) =>
@@ -841,7 +1183,36 @@ function ensureBatchStepCoverage(
     )
   );
 
-  for (const plan of mergedPlans) {
+  const jobStepsByJobId = new Map(jobs.map((job) => [job.job_id, job.job_steps]));
+  const productionDatesByJobId = new Map(
+    jobs.map((job) => [job.job_id, getPreferredWorkingDateStrings(todayString, job.due_date)])
+  );
+  const beforeDueDatesByJobId = new Map(
+    jobs.map((job) => [job.job_id, getPreferredWorkingDateStrings(todayString, job.due_date)])
+  );
+  const weekendDatesByJobId = new Map(
+    jobs.map((job) => [job.job_id, getWeekendDateStrings(todayString, job.due_date)])
+  );
+
+  const sortedMergedPlans = [...mergedPlans].sort((left, right) => {
+    if (left.date !== right.date) {
+      return left.date.localeCompare(right.date);
+    }
+
+    if (left.job_id !== right.job_id) {
+      return left.job_id - right.job_id;
+    }
+
+    const leftPriority = stepMap.get(`${left.job_id}:${left.job_step_id}`)?.priority ?? Number.MAX_SAFE_INTEGER;
+    const rightPriority = stepMap.get(`${right.job_id}:${right.job_step_id}`)?.priority ?? Number.MAX_SAFE_INTEGER;
+    if (leftPriority !== rightPriority) {
+      return leftPriority - rightPriority;
+    }
+
+    return left.job_step_id - right.job_step_id;
+  });
+
+  for (const plan of sortedMergedPlans) {
     const step = stepMap.get(`${plan.job_id}:${plan.job_step_id}`);
     if (!step || !step.minutes_per_unit || step.minutes_per_unit <= 0) {
       continue;
@@ -856,18 +1227,26 @@ function ensureBatchStepCoverage(
     const availableUnits = getAvailableUnitsForDate(normalizedStep, plan.date, usedMinutesMap);
     const allocatedForStep = allocatedByJobStep.get(`${plan.job_id}:${plan.job_step_id}`) || 0;
     const remainingAllowed = Math.max(0, normalizedStep.remaining_quantity - allocatedForStep);
-    const adjustedQuantity = Math.min(plan.quantity, availableUnits, remainingAllowed);
+    const precedenceAllowance = getPrecedenceAllowanceForDate(
+      normalizedStep,
+      jobStepsByJobId.get(plan.job_id) || [],
+      allocationMap,
+      productionDatesByJobId.get(plan.job_id) || [],
+      plan.date,
+      (currentStep, date) => `${plan.job_id}:${currentStep.job_step_id}:${date}`
+    );
+    const adjustedQuantity = Math.min(plan.quantity, availableUnits, remainingAllowed, precedenceAllowance);
 
     if (adjustedQuantity <= 0) {
-      console.log(
-        `[AUTO-PLAN BATCH DEBUG] Job ${normalizedStep.job_number} step ${normalizedStep.step_name} ${plan.date}: AI allocation skipped because no shared capacity remains (${getUsedMinutesForStepOnDate(usedMinutesMap, normalizedStep.step_id, plan.date)}/${normalizedStep.standard_time} min already used)`
+      debugLog(
+        `[AUTO-PLAN BATCH DEBUG] Job ${normalizedStep.job_number} step ${normalizedStep.step_name} ${plan.date}: AI allocation skipped because no shared capacity or predecessor output is available`
       );
       continue;
     }
 
     if (adjustedQuantity !== plan.quantity) {
-      console.log(
-        `[AUTO-PLAN BATCH DEBUG] Job ${normalizedStep.job_number} step ${normalizedStep.step_name} ${plan.date}: AI allocation adjusted from ${plan.quantity} to ${adjustedQuantity} due to shared capacity`
+      debugLog(
+        `[AUTO-PLAN BATCH DEBUG] Job ${normalizedStep.job_number} step ${normalizedStep.step_name} ${plan.date}: AI allocation adjusted from ${plan.quantity} to ${adjustedQuantity} due to shared capacity or predecessor handoff limits`
       );
     }
 
@@ -877,19 +1256,21 @@ function ensureBatchStepCoverage(
   }
 
   for (const job of jobs) {
-    const productionDates = getWeekdayDateStrings(todayString, job.due_date);
-    console.log(
+    const productionDates = productionDatesByJobId.get(job.job_id) || [];
+    const beforeDueDates = beforeDueDatesByJobId.get(job.job_id) || productionDates;
+    const weekendDates = weekendDatesByJobId.get(job.job_id) || [];
+    debugLog(
       `[AUTO-PLAN BATCH DEBUG] Job ${job.job_number} working dates considered: ${productionDates.join(", ")}`
     );
 
     for (const step of job.job_steps.filter((item) => item.minutes_per_unit && item.minutes_per_unit > 0)) {
       const unitsPerDay = Math.floor(step.standard_time / (step.minutes_per_unit || 1));
       const stepAllocationKey = `${job.job_id}:${step.job_step_id}`;
-      const maxPossibleBeforeDueDate = productionDates.reduce(
+      const maxPossibleBeforeDueDate = beforeDueDates.reduce(
         (sum, date) => sum + getAvailableUnitsForDate(step as typeof step & { minutes_per_unit: number }, date, usedMinutesMap),
         0
       ) + (allocatedByJobStep.get(stepAllocationKey) || 0);
-      console.log(
+      debugLog(
         `[AUTO-PLAN BATCH DEBUG] Job ${job.job_number} step ${step.step_name} (${step.job_step_id}) capacity: ${step.standard_time} min/day, ${step.minutes_per_unit} min/unit, max ${maxPossibleBeforeDueDate} units before ${job.due_date}`
       );
 
@@ -897,7 +1278,7 @@ function ensureBatchStepCoverage(
         date,
         quantity: allocationMap.get(`${job.job_id}:${step.job_step_id}:${date}`) || 0,
       }));
-      console.log(
+      debugLog(
         `[AUTO-PLAN BATCH DEBUG] Job ${job.job_number} step ${step.step_name} initial allocations: ${initialAllocations
           .map((entry) => `${entry.date}=${entry.quantity}`)
           .join(", ")}`
@@ -906,7 +1287,7 @@ function ensureBatchStepCoverage(
       const allocated = allocatedByJobStep.get(stepAllocationKey) || 0;
 
       let remaining = step.remaining_quantity - allocated;
-      console.log(
+      debugLog(
         `[AUTO-PLAN BATCH DEBUG] Job ${job.job_number} step ${step.step_name} allocated ${allocated}/${step.remaining_quantity}, remaining ${remaining}`
       );
 
@@ -918,37 +1299,132 @@ function ensureBatchStepCoverage(
         const key = `${job.job_id}:${step.job_step_id}:${date}`;
         const usedMinutes = getUsedMinutesForStepOnDate(usedMinutesMap, step.step_id, date);
         const availableCapacity = getAvailableUnitsForDate(step as typeof step & { minutes_per_unit: number }, date, usedMinutesMap);
+        const precedenceAllowance = getPrecedenceAllowanceForDate(
+          step,
+          job.job_steps,
+          allocationMap,
+          productionDates,
+          date,
+          (currentStep, currentDate) => `${job.job_id}:${currentStep.job_step_id}:${currentDate}`
+        );
         if (availableCapacity <= 0) {
-          console.log(
+          debugLog(
             `[AUTO-PLAN BATCH DEBUG] Job ${job.job_number} step ${step.step_name} ${date}: no free shared capacity left (${usedMinutes}/${step.standard_time} min used)`
           );
           continue;
         }
 
-        const addedQuantity = Math.min(remaining, availableCapacity);
+        if (precedenceAllowance <= 0) {
+          debugLog(
+            `[AUTO-PLAN BATCH DEBUG] Job ${job.job_number} step ${step.step_name} ${date}: waiting for predecessor steps to finish enough quantity before handing off more work`
+          );
+          continue;
+        }
+
+        const addedQuantity = Math.min(remaining, availableCapacity, precedenceAllowance);
         const currentQuantity = allocationMap.get(key) || 0;
         allocationMap.set(key, currentQuantity + addedQuantity);
         addStepMinutesUsage(usedMinutesMap, step.step_id, date, addedQuantity * (step.minutes_per_unit || 0));
         allocatedByJobStep.set(stepAllocationKey, (allocatedByJobStep.get(stepAllocationKey) || 0) + addedQuantity);
         remaining -= addedQuantity;
-        console.log(
+        debugLog(
           `[AUTO-PLAN BATCH DEBUG] Job ${job.job_number} step ${step.step_name} ${date}: added ${addedQuantity}, day total ${currentQuantity + addedQuantity}, remaining ${remaining}`
         );
+      }
+
+      for (const date of weekendDates) {
+        if (remaining <= 0) {
+          break;
+        }
+
+        if (!productionDates.includes(date)) {
+          productionDates.push(date);
+        }
+
+        const key = `${job.job_id}:${step.job_step_id}:${date}`;
+        const availableCapacity = getAvailableUnitsForDate(step as typeof step & { minutes_per_unit: number }, date, usedMinutesMap);
+        const precedenceAllowance = getPrecedenceAllowanceForDate(
+          step,
+          job.job_steps,
+          allocationMap,
+          productionDates,
+          date,
+          (currentStep, currentDate) => `${job.job_id}:${currentStep.job_step_id}:${currentDate}`
+        );
+
+        if (availableCapacity <= 0 || precedenceAllowance <= 0) {
+          continue;
+        }
+
+        const addedQuantity = Math.min(remaining, availableCapacity, precedenceAllowance);
+        const currentQuantity = allocationMap.get(key) || 0;
+        allocationMap.set(key, currentQuantity + addedQuantity);
+        addStepMinutesUsage(usedMinutesMap, step.step_id, date, addedQuantity * (step.minutes_per_unit || 0));
+        allocatedByJobStep.set(stepAllocationKey, (allocatedByJobStep.get(stepAllocationKey) || 0) + addedQuantity);
+        remaining -= addedQuantity;
+        debugLog(
+          `[AUTO-PLAN BATCH DEBUG] Job ${job.job_number} step ${step.step_name} ${date}: weekend fallback added ${addedQuantity}, day total ${currentQuantity + addedQuantity}, remaining ${remaining}`
+        );
+      }
+
+      if (remaining > 0) {
+        debugLog(
+          `[AUTO-PLAN BATCH DEBUG] Job ${job.job_number} step ${step.step_name}: due-date capacity exhausted, deferring ${remaining} units to overdue phase so jobs that can still finish on time use shared capacity first`
+        );
+        overdueRemainingByJobStep.set(stepAllocationKey, remaining);
       }
 
       const finalAllocations = productionDates.map((date) => ({
         date,
         quantity: allocationMap.get(`${job.job_id}:${step.job_step_id}:${date}`) || 0,
       }));
-      console.log(
+      debugLog(
         `[AUTO-PLAN BATCH DEBUG] Job ${job.job_number} step ${step.step_name} final allocations: ${finalAllocations
           .map((entry) => `${entry.date}=${entry.quantity}`)
           .join(", ")}`
       );
 
-      if (remaining > 0) {
+      if (remaining <= 0) {
+        overdueRemainingByJobStep.delete(stepAllocationKey);
+      }
+    }
+  }
+
+  for (const job of jobs) {
+    const productionDates = productionDatesByJobId.get(job.job_id) || [];
+
+    for (const step of job.job_steps.filter((item) => item.minutes_per_unit && item.minutes_per_unit > 0)) {
+      const stepAllocationKey = `${job.job_id}:${step.job_step_id}`;
+      const remaining = overdueRemainingByJobStep.get(stepAllocationKey) || 0;
+      if (remaining <= 0) {
+        continue;
+      }
+
+      debugLog(
+        `[AUTO-PLAN BATCH DEBUG] Job ${job.job_number} step ${step.step_name}: starting overdue phase with ${remaining} units after all on-time jobs were allocated`
+      );
+
+      const unresolved = extendBatchProductionDatesUntilPlanned(
+        job.job_id,
+        job.job_number,
+        step as JobStepWithRemaining & { minutes_per_unit: number },
+        job.job_steps,
+        allocationMap,
+        usedMinutesMap,
+        allocatedByJobStep,
+        productionDates,
+        remaining,
+        getLaterDateString(todayString, job.due_date)
+      );
+
+      if (unresolved > 0) {
+        const maxPossibleBeforeDueDate = (beforeDueDatesByJobId.get(job.job_id) || productionDates).reduce(
+          (sum, date) => sum + getAvailableUnitsForDate(step as typeof step & { minutes_per_unit: number }, date, usedMinutesMap),
+          0
+        ) + ((allocatedByJobStep.get(stepAllocationKey) || 0) - unresolved);
+
         throw new Error(
-          `Unable to create a complete plan for job ${job.job_number} step ${step.step_name}. Missing ${remaining} units before due date ${job.due_date}. Shared step capacity is already partly used on those days, and the maximum possible before due date is ${maxPossibleBeforeDueDate} units.`
+          `Unable to create a complete plan for job ${job.job_number} step ${step.step_name}. Missing ${unresolved} units even after extending beyond due date ${job.due_date}. Shared step capacity and predecessor constraints do not allow enough output, and the maximum possible before due date is ${maxPossibleBeforeDueDate} units.`
         );
       }
     }
@@ -984,24 +1460,22 @@ export async function generateAutoPlan(
   jobSteps: JobStepWithRemaining[],
   existingStepMinutesByDate: ExistingStepMinutesByDate = {}
 ): Promise<PlanningPair[]> {
-  const provider = getAiProvider();
-  const providerName = getProviderDisplayName(provider);
-  getApiKeyForProvider(provider);
-
   const todayString = formatLocalDate(new Date());
 
-  console.log(`\n========== ${providerName.toUpperCase()} AUTO PLAN REQUEST ==========`);
-  console.log(`Job Number: ${jobNumber}`);
-  console.log(`Due Date: ${dueDate}`);
-  console.log(`Current Date: ${todayString}`);
-  console.log(`Job Steps Count: ${jobSteps.length}`);
-  console.log("Job Steps Data:");
-  jobSteps.forEach(s => {
-    console.log(`  - Step ID ${s.job_step_id}: ${s.step_name} (${s.minutes_per_unit} min/unit, ${s.standard_time} min/day, remaining ${s.remaining_quantity})`);
+  debugLog(`\n========== AUTO PLAN REQUEST ==========`);
+  debugLog(`Job Number: ${jobNumber}`);
+  debugLog(`Due Date: ${dueDate}`);
+  debugLog(`Current Date: ${todayString}`);
+  const orderedJobSteps = sortStepsByPriority(jobSteps);
+
+  debugLog(`Job Steps Count: ${orderedJobSteps.length}`);
+  debugLog("Job Steps Data:");
+  orderedJobSteps.forEach((step) => {
+    debugLog(`  - Priority ${step.priority} Step ID ${step.job_step_id}: ${step.step_name} (${step.minutes_per_unit} min/unit, ${step.standard_time} min/day, remaining ${step.remaining_quantity})`);
   });
 
   // Calculate capacity for each step
-  const stepCapacities = jobSteps
+  const stepCapacities = orderedJobSteps
     .filter((s) => s.minutes_per_unit && s.minutes_per_unit > 0)
     .map((s) => {
       const minutesPerUnit = s.minutes_per_unit as number;
@@ -1011,6 +1485,7 @@ export async function generateAutoPlan(
         step_name: s.step_name,
         minutes_per_unit: minutesPerUnit,
         standard_time: s.standard_time,
+        priority: s.priority,
         remaining_quantity: s.remaining_quantity,
         units_per_day: Math.floor(s.standard_time / minutesPerUnit),
       };
@@ -1022,196 +1497,67 @@ export async function generateAutoPlan(
     );
   }
 
-  // Build detailed prompt for AI provider
-  const stepDetails = stepCapacities
-    .map(
-      (s) =>
-        `- Job Step ID ${s.job_step_id} (${s.step_name}): Can produce max ${s.units_per_day} units/day (${s.standard_time} min available ÷ ${s.minutes_per_unit} min/unit)`
-    )
-    .join("\n");
+  const completedPlans = ensureSingleStepCoverage(
+    [],
+    stepCapacities.map((step) => ({
+      job_step_id: step.job_step_id,
+      step_id: step.step_id,
+      step_name: step.step_name,
+      minutes_per_unit: step.minutes_per_unit,
+      standard_time: step.standard_time,
+      priority: step.priority,
+      remaining_quantity: step.remaining_quantity,
+    })),
+    todayString,
+    dueDate,
+    existingStepMinutesByDate
+  );
 
-  const prompt = `You are a production planning AI. Calculate an optimal production schedule for a manufacturing job.
+  const totalPlanned = completedPlans.reduce((sum, plan) => sum + plan.quantity, 0);
+  debugLog(
+    `Deterministic weekday-first planning: Total ${totalPlanned} units planned across ${completedPlans.length} planning records`
+  );
 
-Job Details:
-- Job Number: ${jobNumber}
-- Current Date: ${todayString}
-- Due Date: ${dueDate}
-- Production Steps with Daily Capacities:
-${stepDetails}
-
-Requirements:
-1. Schedule production only on weekdays (Monday-Friday)
-2. Do not schedule any work before the current date (${todayString})
-3. Do not exceed the daily capacity for each step
-4. Each job_step_id must complete its own remaining_quantity by the due date
-5. Distribute work evenly across steps where possible
-6. Prefer consolidated batches on fewer production days when capacity allows
-7. Avoid returning quantity 1 for a day unless it is unavoidable because of due date or remaining capacity
-8. Return a JSON array with objects containing: date (YYYY-MM-DD), job_step_id, quantity
-
-Production Start: Start on or after ${todayString}. Never use dates before ${todayString}.
-
-Return ONLY valid JSON array format like:
-[
-  {"date": "2026-03-24", "job_step_id": 1, "quantity": 100},
-  {"date": "2026-03-25", "job_step_id": 1, "quantity": 100}
-]
-
-Do not include any markdown formatting, code blocks, or explanations. Just the JSON array.`;
-
-  console.log(`\nPrompt being sent to ${providerName}:`);
-  console.log("---");
-  console.log(prompt);
-  console.log("---\n");
-
-  try {
-    const responseText = await callAiTextResponse(provider, prompt, "single auto-plan");
-    console.log("\nExtracted Response Text:");
-    console.log(responseText);
-
-    const jsonString = extractJsonArrayCandidate(responseText);
-    console.log(jsonString !== sanitizeJsonCandidate(responseText)
-      ? "\nExtracted JSON array from response"
-      : "\nNo complete JSON array wrapper found, using normalized response text");
-    console.log("JSON String length:", jsonString.length);
-    console.log("JSON String Content:");
-    console.log(jsonString);
-
-    const plannedSchedule = parseAiJsonArray<PlanningPair>(responseText, `${providerName} single auto-plan`);
-    console.log(`Parsed JSON successfully. Array length: ${plannedSchedule.length}`);
-    console.log("Parsed Schedule Data:");
-    console.log(JSON.stringify(plannedSchedule, null, 2));
-
-    // Validate and transform response
-    const validPlans: PlanningPair[] = [];
-    const quantityTracker: { [jobStepId: number]: number } = {};
-
-    for (const plan of plannedSchedule) {
-      const { date, job_step_id, quantity } = plan;
-
-      // Validate date format
-      if (!date || typeof date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-        console.warn(`Invalid date format: ${date}, skipping`);
-        continue;
-      }
-
-      if (date < todayString) {
-        console.warn(`Plan date ${date} is before current date ${todayString}, skipping`);
-        continue;
-      }
-
-      if (date > dueDate) {
-        console.warn(`Plan date ${date} is after due date ${dueDate}, skipping`);
-        continue;
-      }
-
-      if (!isWeekday(date)) {
-        console.warn(`Plan date ${date} is not a weekday, skipping`);
-        continue;
-      }
-
-      // Validate job_step_id
-      if (!Number.isInteger(job_step_id)) {
-        console.warn(`Invalid job_step_id: ${job_step_id}, skipping`);
-        continue;
-      }
-
-      // Validate quantity
-      if (!Number.isInteger(quantity) || quantity <= 0) {
-        console.warn(`Invalid quantity: ${quantity} for step ${job_step_id}, skipping`);
-        continue;
-      }
-
-      // Check if step exists and get its capacity
-      const stepCapacity = stepCapacities.find((s) => s.job_step_id === job_step_id);
-      if (!stepCapacity) {
-        console.warn(`Step ${job_step_id} not found in job steps, skipping`);
-        continue;
-      }
-
-      const currentAllocated = quantityTracker[job_step_id] || 0;
-      const remainingAllowed = Math.max(0, stepCapacity.remaining_quantity - currentAllocated);
-      if (remainingAllowed <= 0) {
-        console.warn(`No remaining quantity left for step ${job_step_id}, skipping`);
-        continue;
-      }
-
-      if (quantity > stepCapacity.units_per_day || quantity > remainingAllowed) {
-        const adjustedQuantity = Math.min(stepCapacity.units_per_day, remainingAllowed);
-        console.warn(
-          `Quantity ${quantity} exceeds allowed amount for step ${job_step_id} on ${date}, adjusting to ${adjustedQuantity}`
-        );
-        validPlans.push({
-          date,
-          job_step_id,
-          quantity: adjustedQuantity,
-        });
-        quantityTracker[job_step_id] = (quantityTracker[job_step_id] || 0) + adjustedQuantity;
-      } else {
-        validPlans.push({ date, job_step_id, quantity });
-        quantityTracker[job_step_id] = (quantityTracker[job_step_id] || 0) + quantity;
-      }
-    }
-
-    const completedPlans = ensureSingleStepCoverage(
-      validPlans,
-      stepCapacities.map((step) => ({
-        job_step_id: step.job_step_id,
-        step_id: step.step_id,
-        step_name: step.step_name,
-        minutes_per_unit: step.minutes_per_unit,
-        standard_time: step.standard_time,
-        remaining_quantity: step.remaining_quantity,
-      })),
-      todayString,
-      dueDate,
-      existingStepMinutesByDate
-    );
-
-    // Log summary
-    const totalPlanned = completedPlans.reduce((sum, plan) => sum + plan.quantity, 0);
-    console.log(
-      `${providerName} planning: Total ${totalPlanned} units planned across ${completedPlans.length} planning records`
-    );
-    
-    console.log("\nFinal Planning Pairs:");
-    completedPlans.slice(0, 5).forEach((p, i) => {
-      console.log(`  ${i + 1}. Date: ${p.date}, Step ID: ${p.job_step_id}, Quantity: ${p.quantity}`);
-    });
-    if (completedPlans.length > 5) {
-      console.log(`  ... and ${completedPlans.length - 5} more`);
-    }
-    
-    console.log(`========== ${providerName.toUpperCase()} REQUEST COMPLETE ==========\n`);
-
-    return completedPlans;
-  } catch (error) {
-    if (error instanceof SyntaxError) {
-      throw new Error(`Failed to parse AI response as JSON: ${error.message}`);
-    }
-    throw error;
+  debugLog("\nFinal Planning Pairs:");
+  completedPlans.slice(0, 5).forEach((p, i) => {
+    debugLog(`  ${i + 1}. Date: ${p.date}, Step ID: ${p.job_step_id}, Quantity: ${p.quantity}`);
+  });
+  if (completedPlans.length > 5) {
+    debugLog(`  ... and ${completedPlans.length - 5} more`);
   }
+
+  debugLog("========== AUTO PLAN REQUEST COMPLETE ==========\n");
+
+  return completedPlans;
 }
 
 export async function generateBatchAutoPlan(
   jobs: BatchJobPlanningInput[],
   existingStepMinutesByDate: ExistingStepMinutesByDate = {}
-): Promise<BatchPlanningPair[]> {
+): Promise<BatchAutoPlanResult> {
   const provider = getAiProvider();
   const providerName = getProviderDisplayName(provider);
   getApiKeyForProvider(provider);
 
   if (!jobs.length) {
-    return [];
+    return {
+      planningPairs: [],
+      priorityRecommendations: [],
+    };
   }
 
   const todayString = formatLocalDate(new Date());
 
-  console.log(`\n========== ${providerName.toUpperCase()} BATCH AUTO PLAN REQUEST ==========`);
-  console.log(`Jobs Count: ${jobs.length}`);
-  console.log(`Current Date: ${todayString}`);
+  debugLog(`\n========== ${providerName.toUpperCase()} BATCH AUTO PLAN REQUEST ==========`);
+  debugLog(`Jobs Count: ${jobs.length}`);
+  debugLog(`Current Date: ${todayString}`);
 
-  const promptJobs = jobs.map((job) => ({
+  const orderedJobs = jobs.map((job) => ({
+    ...job,
+    job_steps: sortStepsByPriority(job.job_steps),
+  }));
+
+  const promptJobs = orderedJobs.map((job) => ({
     job_id: job.job_id,
     job_number: job.job_number,
     due_date: job.due_date,
@@ -1221,12 +1567,13 @@ export async function generateBatchAutoPlan(
       .map((step) => ({
         job_step_id: step.job_step_id,
         step_name: step.step_name,
+        priority: step.priority,
         remaining_quantity: step.remaining_quantity,
         units_per_day: Math.floor(step.standard_time / (step.minutes_per_unit || 1)),
       })),
   }));
 
-  const prompt = `You are a production planning AI. Calculate production schedules for multiple manufacturing jobs in one response.
+  const prompt = `You are a production planning AI. Prioritize multiple manufacturing jobs for a deterministic factory scheduler.
 
 Current Date: ${todayString}
 
@@ -1234,164 +1581,131 @@ Input Jobs JSON:
 ${JSON.stringify(promptJobs)}
 
 Requirements:
-1. Schedule production only on weekdays (Monday-Friday)
-2. Do not schedule any work before ${todayString}
-3. Do not schedule any work after each job's due_date
-4. Do not exceed units_per_day for any job_step_id on any day
-5. Do not exceed remaining_quantity for any job_step_id across all returned rows
-6. Only use job_id and job_step_id values that exist in the input JSON
-7. Prefer consolidated batches on fewer production days when capacity allows
-8. Avoid returning quantity 1 for a day unless it is unavoidable because of due date or remaining capacity
-9. Return ONLY a valid JSON array of objects with fields: job_id, date, job_step_id, quantity
+1. Return job priorities only. Do not create dates or quantities.
+2. Lower numeric priority means the job should receive shared factory capacity earlier.
+3. Prioritize jobs that are more urgent to keep on or before due_date.
+4. When urgency is similar, prefer jobs with less slack between current date and required production effort.
+5. Consider total remaining work across all job steps and daily capacities.
+6. Consider that the deterministic scheduler will schedule each job on Monday-Friday first, fill each day as much as allowed, and enforce step precedence.
+7. Only use job_id values that exist in the input JSON.
+8. Return every job exactly once.
+9. Include a short human-readable reason for each job priority.
+10. Return ONLY a valid JSON array of objects with fields: job_id, priority, reason.
 
 Return ONLY valid JSON array format like:
 [
-  {"job_id": 1, "date": "2026-03-24", "job_step_id": 37, "quantity": 13},
-  {"job_id": 1, "date": "2026-03-24", "job_step_id": 38, "quantity": 30}
+  {"job_id": 5, "priority": 1, "reason": "Due date is closest and the job has low slack."},
+  {"job_id": 2, "priority": 2, "reason": "Due date is later but it still competes for shared capacity."},
+  {"job_id": 9, "priority": 3, "reason": "This job has the most slack before due date."}
 ]
 
 Do not include markdown formatting, code blocks, comments, or explanations.`;
 
-  console.log(`\nBatch prompt being sent to ${providerName}:`);
-  console.log("---");
-  console.log(prompt);
-  console.log("---\n");
-
-  const jobMap = new Map(
-    jobs.map((job) => {
-      const stepMap = new Map(
-        job.job_steps
-          .filter((step) => step.minutes_per_unit && step.minutes_per_unit > 0)
-          .map((step) => [
-            step.job_step_id,
-            {
-              due_date: job.due_date,
-              remaining_quantity: step.remaining_quantity,
-              units_per_day: Math.floor(step.standard_time / (step.minutes_per_unit || 1)),
-            },
-          ])
-      );
-
-      return [job.job_id, { job_number: job.job_number, due_date: job.due_date, stepMap }];
-    })
-  );
+  debugLog(`\nBatch prompt being sent to ${providerName}:`);
+  debugLog("---");
+  debugLog(prompt);
+  debugLog("---\n");
 
   try {
-    const responseText = await callAiTextResponse(provider, prompt, "batch auto-plan");
-    console.log("\nExtracted Batch Response Text:");
-    console.log(responseText);
+    const responseText = await callAiTextResponse(provider, prompt, "batch job prioritization");
+    debugLog("\nExtracted Batch Response Text:");
+    debugLog(responseText);
 
     const jsonString = extractJsonArrayCandidate(responseText);
-    console.log(jsonString !== sanitizeJsonCandidate(responseText)
+    debugLog(jsonString !== sanitizeJsonCandidate(responseText)
       ? "\nExtracted JSON array from batch response"
       : "\nNo complete JSON array wrapper found in batch response, using normalized response text");
 
-    console.log("Batch JSON String length:", jsonString.length);
-    console.log("Batch JSON String Content:");
-    console.log(jsonString);
+    debugLog("Batch JSON String length:", jsonString.length);
+    debugLog("Batch JSON String Content:");
+    debugLog(jsonString);
 
-    const plannedSchedule = parseAiJsonArray<BatchPlanningPair>(responseText, `${providerName} batch auto-plan`);
-    console.log(`Parsed batch JSON successfully. Array length: ${plannedSchedule.length}`);
-    console.log("Parsed Batch Schedule Data:");
-    console.log(JSON.stringify(plannedSchedule, null, 2));
+    const prioritySchedule = parseAiJsonArray<BatchJobPriorityRecommendation>(responseText, `${providerName} batch job prioritization`);
+    debugLog(`Parsed batch JSON successfully. Array length: ${prioritySchedule.length}`);
+    debugLog("Parsed Batch Priority Data:");
+    debugLog(JSON.stringify(prioritySchedule, null, 2));
 
-    const validPlans: BatchPlanningPair[] = [];
-    const quantityTracker: Record<string, number> = {};
-
-    for (const plan of plannedSchedule) {
-      const { job_id, date, job_step_id, quantity } = plan;
-
-      if (!Number.isInteger(job_id)) {
-        console.warn(`Invalid job_id: ${job_id}, skipping`);
+    const aiPriorityByJobId = new Map<number, number>();
+    const aiReasonByJobId = new Map<number, string>();
+    for (const item of prioritySchedule) {
+      if (!Number.isInteger(item?.job_id)) {
+        console.warn(`Invalid prioritized job_id: ${item?.job_id}, skipping`);
         continue;
       }
 
-      const jobData = jobMap.get(job_id);
-      if (!jobData) {
-        console.warn(`Job ${job_id} not found in batch input, skipping`);
+      if (!orderedJobs.some((job) => job.job_id === item.job_id)) {
+        console.warn(`Prioritized job ${item.job_id} not found in batch input, skipping`);
         continue;
       }
 
-      if (!date || typeof date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-        console.warn(`Invalid date format: ${date}, skipping`);
+      if (!Number.isInteger(item?.priority) || item.priority <= 0) {
+        console.warn(`Invalid priority ${item?.priority} for job ${item?.job_id}, skipping`);
         continue;
       }
 
-      if (date < todayString) {
-        console.warn(`Plan date ${date} is before current date ${todayString}, skipping`);
+      if (aiPriorityByJobId.has(item.job_id)) {
+        console.warn(`Duplicate priority recommendation for job ${item.job_id}, keeping first value`);
         continue;
       }
 
-      if (!isWeekday(date)) {
-        console.warn(`Plan date ${date} is not a weekday, skipping`);
-        continue;
-      }
-
-      if (date > jobData.due_date) {
-        console.warn(`Plan date ${date} is after due date ${jobData.due_date} for job ${jobData.job_number}, skipping`);
-        continue;
-      }
-
-      if (!Number.isInteger(job_step_id)) {
-        console.warn(`Invalid job_step_id: ${job_step_id}, skipping`);
-        continue;
-      }
-
-      if (!Number.isInteger(quantity) || quantity <= 0) {
-        console.warn(`Invalid quantity: ${quantity} for step ${job_step_id}, skipping`);
-        continue;
-      }
-
-      const stepData = jobData.stepMap.get(job_step_id);
-      if (!stepData) {
-        console.warn(`Step ${job_step_id} not found for job ${job_id}, skipping`);
-        continue;
-      }
-
-      const quantityKey = `${job_id}:${job_step_id}`;
-      const currentAllocated = quantityTracker[quantityKey] || 0;
-      const remainingAllowed = Math.max(0, stepData.remaining_quantity - currentAllocated);
-      if (remainingAllowed <= 0) {
-        console.warn(`No remaining quantity left for job ${job_id} step ${job_step_id}, skipping`);
-        continue;
-      }
-
-      const adjustedQuantity = Math.min(quantity, stepData.units_per_day, remainingAllowed);
-      if (adjustedQuantity !== quantity) {
-        console.warn(
-          `Adjusting quantity from ${quantity} to ${adjustedQuantity} for job ${job_id} step ${job_step_id} on ${date}`
-        );
-      }
-
-      validPlans.push({
-        job_id,
-        date,
-        job_step_id,
-        quantity: adjustedQuantity,
-      });
-      quantityTracker[quantityKey] = currentAllocated + adjustedQuantity;
+      aiPriorityByJobId.set(item.job_id, item.priority);
+      aiReasonByJobId.set(
+        item.job_id,
+        typeof item.reason === "string" && item.reason.trim().length > 0
+          ? item.reason.trim()
+          : "AI did not provide a reason; fallback scheduling rules will still apply."
+      );
     }
 
-    const totalPlanned = validPlans.reduce((sum, plan) => sum + plan.quantity, 0);
-    const completedPlans = ensureBatchStepCoverage(validPlans, jobs, todayString, existingStepMinutesByDate);
+    const prioritizedJobs = [...orderedJobs].sort((left, right) => {
+      const leftPriority = aiPriorityByJobId.get(left.job_id) ?? Number.MAX_SAFE_INTEGER;
+      const rightPriority = aiPriorityByJobId.get(right.job_id) ?? Number.MAX_SAFE_INTEGER;
+
+      if (leftPriority !== rightPriority) {
+        return leftPriority - rightPriority;
+      }
+
+      if (left.due_date !== right.due_date) {
+        return left.due_date.localeCompare(right.due_date);
+      }
+
+      return left.job_number.localeCompare(right.job_number);
+    });
+
+    debugLog("Batch job execution order after AI prioritization:");
+    prioritizedJobs.forEach((job, index) => {
+      const priorityLabel = aiPriorityByJobId.get(job.job_id) ?? "fallback";
+      const reasonLabel = aiReasonByJobId.get(job.job_id) ?? "Fallback by due date and job number.";
+      debugLog(`  ${index + 1}. Job ${job.job_number} (job_id=${job.job_id}, ai_priority=${priorityLabel}) - ${reasonLabel}`);
+    });
+
+    const completedPlans = ensureBatchStepCoverage([], prioritizedJobs, todayString, existingStepMinutesByDate);
     const completedTotalPlanned = completedPlans.reduce((sum, plan) => sum + plan.quantity, 0);
-    console.log(
-      `${providerName} batch planning: Total ${completedTotalPlanned} units planned across ${completedPlans.length} planning records`
+    debugLog(
+      `${providerName} batch prioritization + deterministic scheduling: Total ${completedTotalPlanned} units planned across ${completedPlans.length} planning records`
     );
 
-    console.log("\nFinal Batch Planning Pairs:");
+    debugLog("\nFinal Batch Planning Pairs:");
     completedPlans.slice(0, 10).forEach((plan, index) => {
-      console.log(
+      debugLog(
         `  ${index + 1}. Job ID: ${plan.job_id}, Date: ${plan.date}, Step ID: ${plan.job_step_id}, Quantity: ${plan.quantity}`
       );
     });
     if (completedPlans.length > 10) {
-      console.log(`  ... and ${completedPlans.length - 10} more`);
+      debugLog(`  ... and ${completedPlans.length - 10} more`);
     }
 
-    console.log(`========== ${providerName.toUpperCase()} BATCH REQUEST COMPLETE ==========\n`);
+    debugLog(`========== ${providerName.toUpperCase()} BATCH REQUEST COMPLETE ==========\n`);
 
-    return completedPlans;
+    return {
+      planningPairs: completedPlans,
+      priorityRecommendations: prioritizedJobs.map((job) => ({
+        job_id: job.job_id,
+        job_number: job.job_number,
+        priority: aiPriorityByJobId.get(job.job_id) ?? null,
+        reason: aiReasonByJobId.get(job.job_id) ?? "Fallback by due date and job number.",
+      })),
+    };
   } catch (error) {
     if (error instanceof SyntaxError) {
       throw new Error(`Failed to parse AI response as JSON: ${error.message}`);
@@ -1399,3 +1713,4 @@ Do not include markdown formatting, code blocks, comments, or explanations.`;
     throw error;
   }
 }
+

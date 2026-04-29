@@ -7,14 +7,33 @@ const prisma = new PrismaClient();
 // Interface สำหรับ request body ตอนเพิ่ม/แก้ไข Step
 interface CreateStepBody {
   step_name: string;
-    standard_time: number;
+  standard_time: number;
+  priority?: number;
+}
+
+function parsePriority(value: unknown): number | null {
+  const parsedValue = Number(value);
+
+  if (!Number.isInteger(parsedValue) || parsedValue <= 0) {
+    return null;
+  }
+
+  return parsedValue;
 }
 
 //ดึง Step ทั้งหมด
 router.get("/", async (_req: Request, res: Response) => {
   try {
     const steps: Step[] = await prisma.step.findMany();
-    res.json(steps);
+    res.json(
+      steps.sort((left, right) => {
+        if (left.priority !== right.priority) {
+          return left.priority - right.priority;
+        }
+
+        return left.step_id - right.step_id;
+      })
+    );
   } catch (error: any) {
     console.error("Error fetching Steps:", error);
     res.status(500).json({ error: "เกิดข้อผิดพลาดในการดึงข้อมูล Step" });
@@ -43,16 +62,21 @@ router.get("/:id", async (req: Request<{ id: string }>, res: Response) => {
 
 // เพิ่ม Step
 router.post("/", async (req: Request<{}, {}, CreateStepBody>, res: Response) => {
-  const { step_name, standard_time } = req.body;
+  const { step_name, standard_time, priority } = req.body;
+  const parsedPriority = parsePriority(priority ?? 1);
 
   if (!step_name || !standard_time) {
   return res.status(400).json({ 
     error: "กรุณากรอกชื่อ Step และกำลังการผลิตสูงสุดต่อวัน" 
   });
 }
+
+  if (parsedPriority === null) {
+    return res.status(400).json({ error: "priority ต้องเป็นจำนวนเต็มบวก" });
+  }
   try {
     const newStep: Step = await prisma.step.create({
-      data: { step_name,standard_time },
+      data: { step_name, standard_time, priority: parsedPriority },
     });
     res.status(201).json(newStep);
   } catch (error: any) {
@@ -67,13 +91,18 @@ router.post("/", async (req: Request<{}, {}, CreateStepBody>, res: Response) => 
 // แก้ไข Step
 router.put("/:id", async (req: Request<{ id: string }, {}, CreateStepBody>, res: Response) => {
   const { id } = req.params;
-  const { step_name, standard_time  } = req.body;
+  const { step_name, standard_time, priority } = req.body;
+  const parsedPriority = parsePriority(priority ?? 1);
 
   if (!step_name || !standard_time) {
   return res.status(400).json({ 
     error: "กรุณากรอกชื่อ Step และกำลังการผลิตสูงสุดต่อวัน" 
   });
 }
+
+  if (parsedPriority === null) {
+    return res.status(400).json({ error: "priority ต้องเป็นจำนวนเต็มบวก" });
+  }
 
   try {
     const existingStep = await prisma.step.findUnique({
@@ -86,7 +115,7 @@ router.put("/:id", async (req: Request<{ id: string }, {}, CreateStepBody>, res:
 
     const updatedStep = await prisma.step.update({
       where: { step_id: parseInt(id, 10) },
-      data: { step_name ,standard_time},
+      data: { step_name, standard_time, priority: parsedPriority },
     });
 
     res.json(updatedStep);
@@ -250,6 +279,7 @@ router.get("/:id/usage", async (req: Request<{ id: string }>, res: Response) => 
     res.json({
       step_id: stepId,
       step_name: step.step_name,
+      priority: step.priority,
       is_used: usage.length > 0,
       total_jobs: usage.length,
       jobs_with_logs: usage.filter(u => u.has_production_logs).length,

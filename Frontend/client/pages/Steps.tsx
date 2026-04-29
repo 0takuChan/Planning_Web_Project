@@ -40,10 +40,13 @@ interface Step {
   step_id: number;
   step_name: string;
   standard_time: number;
+  priority: number;
 }
 
 const DAILY_CAPACITY_LABEL = "เวลาปฏิบัติงานสูงสุด/วัน";
 const DAILY_CAPACITY_PLACEHOLDER = "เช่น 480 นาที/วัน";
+const STEP_PRIORITY_LABEL = "ลำดับก่อน-หลัง";
+const STEP_PRIORITY_PLACEHOLDER = "1 = ทำก่อน";
 
 export default function Steps() {
   const { canEdit } = usePermissions();
@@ -56,6 +59,7 @@ export default function Steps() {
   const [editingStep, setEditingStep] = useState<Step | null>(null);
   const [stepName, setStepName] = useState("");
   const [dailyCapacity, setDailyCapacity] = useState("");
+  const [stepPriority, setStepPriority] = useState("1");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Fetch steps from API
@@ -74,7 +78,6 @@ export default function Steps() {
       }
       
       const data = await response.json();
-      console.log('Fetched steps:', data);
       setSteps(data);
     } catch (error) {
       console.error("Error fetching steps:", error);
@@ -108,6 +111,16 @@ export default function Steps() {
       return;
     }
 
+    const parsedPriority = Number(stepPriority);
+    if (!Number.isInteger(parsedPriority) || parsedPriority <= 0) {
+      toast({
+        title: "Error",
+        description: "Step priority must be a positive integer",
+        variant: "destructive",
+      });
+      return;
+    }
+
     try {
       setIsSubmitting(true);
       const response = await apiFetch('http://localhost:4000/api/steps', {
@@ -118,6 +131,7 @@ export default function Steps() {
         body: JSON.stringify({
           step_name: stepName.trim(),
           standard_time: parsedDailyCapacity,
+          priority: parsedPriority,
         }),
       });
 
@@ -130,6 +144,7 @@ export default function Steps() {
       setSteps([...steps, newStep]);
       setStepName("");
       setDailyCapacity("");
+      setStepPriority("1");
       setIsAddDialogOpen(false);
       toast({
         title: "Success",
@@ -167,6 +182,16 @@ export default function Steps() {
       return;
     }
 
+    const parsedPriority = Number(stepPriority);
+    if (!Number.isInteger(parsedPriority) || parsedPriority <= 0) {
+      toast({
+        title: "Error",
+        description: "Step priority must be a positive integer",
+        variant: "destructive",
+      });
+      return;
+    }
+
     try {
       setIsSubmitting(true);
       const response = await apiFetch(`http://localhost:4000/api/steps/${editingStep.step_id}`, {
@@ -177,6 +202,7 @@ export default function Steps() {
         body: JSON.stringify({
           step_name: stepName.trim(),
           standard_time: parsedDailyCapacity,
+          priority: parsedPriority,
         }),
       });
 
@@ -191,6 +217,7 @@ export default function Steps() {
       ));
       setStepName("");
       setDailyCapacity("");
+      setStepPriority("1");
       setEditingStep(null);
       setIsEditDialogOpen(false);
       toast({
@@ -265,18 +292,21 @@ export default function Steps() {
     setEditingStep(step);
     setStepName(step.step_name);
     setDailyCapacity(String(step.standard_time ?? ""));
+    setStepPriority(String(step.priority ?? 1));
     setIsEditDialogOpen(true);
   };
 
   const resetAddDialog = () => {
     setStepName("");
     setDailyCapacity("");
+    setStepPriority("1");
     setIsAddDialogOpen(false);
   };
 
   const resetEditDialog = () => {
     setStepName("");
     setDailyCapacity("");
+    setStepPriority("1");
     setEditingStep(null);
     setIsEditDialogOpen(false);
   };
@@ -354,6 +384,21 @@ export default function Steps() {
                     />
                   </div>
                   <div className="grid grid-cols-4 items-center gap-4">
+                    <Label htmlFor="step-priority" className="text-right">
+                      {STEP_PRIORITY_LABEL}
+                    </Label>
+                    <Input
+                      id="step-priority"
+                      type="number"
+                      min="1"
+                      step="1"
+                      value={stepPriority}
+                      onChange={(e) => setStepPriority(e.target.value)}
+                      className="col-span-3"
+                      placeholder={STEP_PRIORITY_PLACEHOLDER}
+                    />
+                  </div>
+                  <div className="grid grid-cols-4 items-center gap-4">
                     <Label htmlFor="standard-time" className="text-right">
                       {DAILY_CAPACITY_LABEL}
                     </Label>
@@ -384,7 +429,7 @@ export default function Steps() {
                   </Button>
                   <Button 
                     onClick={handleAddStep}
-                    disabled={isSubmitting || !stepName.trim() || !dailyCapacity.trim()}
+                    disabled={isSubmitting || !stepName.trim() || !dailyCapacity.trim() || !stepPriority.trim()}
                   >
                     {isSubmitting ? "กำลังเพิ่ม..." : "บันทึก"}
                   </Button>
@@ -407,6 +452,7 @@ export default function Steps() {
                 <TableRow>
                   <TableHead className="w-16">ลำดับ</TableHead>
                   <TableHead>ขั้นตอน</TableHead>
+                  <TableHead>Priority</TableHead>
                   <TableHead>เวลาปฏิบัติงานสูงสุด/วัน</TableHead>
                   <TableHead>รหัสขั้นตอน</TableHead>
                   {canEditPage && (
@@ -418,7 +464,7 @@ export default function Steps() {
                 {steps.length === 0 ? (
                   <TableRow>
                     <TableCell 
-                      colSpan={canEditPage ? 5 : 4} 
+                      colSpan={canEditPage ? 6 : 5} 
                       className="text-center py-8 text-gray-500"
                     >
                       ยังไม่มีรายการขั้นตอนผลิต
@@ -432,6 +478,9 @@ export default function Steps() {
                       </TableCell>
                       <TableCell className="font-medium">
                         {step.step_name}
+                      </TableCell>
+                      <TableCell className="text-gray-600">
+                        {step.priority}
                       </TableCell>
                       <TableCell className="text-gray-600">
                         {step.standard_time.toLocaleString()}
@@ -479,6 +528,21 @@ export default function Steps() {
                                     />
                                   </div>
                                   <div className="grid grid-cols-4 items-center gap-4">
+                                    <Label htmlFor="edit-step-priority" className="text-right">
+                                      {STEP_PRIORITY_LABEL}
+                                    </Label>
+                                    <Input
+                                      id="edit-step-priority"
+                                      type="number"
+                                      min="1"
+                                      step="1"
+                                      value={stepPriority}
+                                      onChange={(e) => setStepPriority(e.target.value)}
+                                      className="col-span-3"
+                                      placeholder={STEP_PRIORITY_PLACEHOLDER}
+                                    />
+                                  </div>
+                                  <div className="grid grid-cols-4 items-center gap-4">
                                     <Label htmlFor="edit-standard-time" className="text-right">
                                       {DAILY_CAPACITY_LABEL}
                                     </Label>
@@ -509,7 +573,7 @@ export default function Steps() {
                                   </Button>
                                   <Button 
                                     onClick={handleEditStep}
-                                    disabled={isSubmitting || !stepName.trim() || !dailyCapacity.trim()}
+                                    disabled={isSubmitting || !stepName.trim() || !dailyCapacity.trim() || !stepPriority.trim()}
                                   >
                                     {isSubmitting ? "กำลังบันทึก..." : "บันทึก"}
                                   </Button>

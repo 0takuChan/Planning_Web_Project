@@ -64,7 +64,6 @@ export default function Navbar() {
         setUserEmail(user.email || "");
         setUserPhone(user.phone || "");
         setUserId(user.id || null);
-        console.log("User data:", user); // Debug log
       } catch (e) {
         console.error("Failed to parse user:", e);
       }
@@ -206,10 +205,10 @@ export default function Navbar() {
 
   return (
     <>
-      <header className="sticky top-0 z-40 h-14 border-b border-slate-200/80 bg-white/90 backdrop-blur supports-[backdrop-filter]:bg-white/75 flex items-center justify-between px-4">
+      <header className="sticky top-0 z-40 flex h-16 items-center justify-between border-b border-slate-200/80 bg-white/90 px-4 backdrop-blur supports-[backdrop-filter]:bg-white/75">
         <div className="flex items-center gap-2 text-sm text-slate-500">
           <RoleIcon className="h-4 w-4" />
-          <span>Role: {getRoleDisplayName(userRole)}</span>
+          <span>{getRoleDisplayName(userRole)}</span>
         </div>
         
         <DropdownMenu>

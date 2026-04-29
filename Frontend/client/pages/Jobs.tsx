@@ -174,7 +174,6 @@ export default function Jobs() {
     if (userStr) {
       try {
         const user = JSON.parse(userStr);
-        console.log("Current user:", user); // Debug log
         if (user.id) {
           setCurrentEmployeeId(user.id); // user.id คือ employee_id
         }
@@ -212,8 +211,6 @@ export default function Jobs() {
           jobsRes.json(),
           jobStepsRes.json()
         ]);
-
-        console.log("Fetched data:", { customersData, stepsData, jobsData, jobStepsData });
 
         setCustomers(customersData);
         setSteps(stepsData);
@@ -382,8 +379,6 @@ export default function Jobs() {
         delivery_location: selectedCustomer.address_detail || "No address provided",
       };
 
-      console.log("Creating job with payload:", payload);
-
       const response = await apiFetch("http://localhost:4000/api/jobs", {
         method: "POST",
         headers: {
@@ -399,7 +394,6 @@ export default function Jobs() {
       }
 
       const newJob = await response.json();
-      console.log("Job created:", newJob);
       
       // สร้าง JobStep สำหรับ steps ที่เลือก
       const jobStepPromises = draft.selectedSteps.map(stepId =>
@@ -502,8 +496,6 @@ export default function Jobs() {
         delivery_location: selectedCustomer.address_detail || "No address provided",
       };
 
-      console.log("Updating job with payload:", payload);
-
       const response = await apiFetch(`http://localhost:4000/api/jobs/${jobId}`, {
         method: "PUT",
         headers: {
@@ -519,7 +511,6 @@ export default function Jobs() {
       }
 
       const updatedJob = await response.json();
-      console.log("Job updated:", updatedJob);
 
       // อัปเดต JobSteps
       // ลบ JobSteps เก่าทั้งหมดก่อน
