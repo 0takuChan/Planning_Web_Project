@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "main": "index.js",
   "type": "commonjs",
+  "prisma": {
+    "seed": "ts-node prisma/seed.ts"
+  },
   "dependencies": {
     "@google/generative-ai": "^0.3.0",
     "@prisma/client": "^6.17.0",
@@ -173,7 +176,8 @@
     "dev": "nodemon --watch src --exec ts-node src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "seed": "ts-node prisma/seed.ts"
+    "seed": "ts-node prisma/seed.ts",
+    "seed:deploy": "prisma db seed"
   },
   "keywords": [],
   "author": "",
