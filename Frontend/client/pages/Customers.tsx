@@ -382,12 +382,12 @@ export default function Customers() {
       return (
         <AppLayout>
           <div className="flex items-center justify-center h-64">
-            <div className="text-slate-600">Loading jobs data...</div>
+            <div className="text-slate-600">Loading Customer data...</div>
           </div>
         </AppLayout>
       );
     }
-    
+
   return (
     
     <AppLayout>
