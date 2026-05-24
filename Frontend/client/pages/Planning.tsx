@@ -1735,9 +1735,6 @@ export default function Planning() {
                 {isAutoPlanLoading ? `Planning ${autoPlanTotalCount} jobs...` : 'Auto Plan All'}
               </button>
             </div>
-            <div className="mb-3 rounded-md border border-violet-100 bg-violet-50 px-3 py-2 text-xs text-violet-900">
-              Auto Plan All ใช้ AI แค่จัดลำดับความสำคัญของ jobs ก่อน จากนั้น backend จะวางวันและจำนวนจริงตามกฎโรงงาน
-            </div>
             <div className="mb-3 flex flex-wrap items-center gap-2">
               <div className="relative flex-1 min-w-[200px]">
                 <Search className="absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />

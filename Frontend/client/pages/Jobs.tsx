@@ -32,6 +32,8 @@ import { usePermissions } from "@/App";
 import { toast } from "@/hooks/use-toast";
 import NewItemBadge from "@/components/common/NewItemBadge";
 import { apiFetch } from "@/lib/api";
+import { LoadingDialog } from "@/components/common/LoadingDialog";
+import { useLoadingDialog } from "@/hooks/use-loading-dialog";
 
 // Interface สำหรับข้อมูล Step จาก API
 interface Step {
@@ -128,6 +130,7 @@ function formatDateYMD(date: string) {
 export default function Jobs() {
   const { canEdit } = usePermissions();
   const canEditPage = canEdit("/jobs");
+  const loadingDialog = useLoadingDialog({ message: "กำลังประมวลผล..." });
   
   const [jobs, setJobs] = useState<JobRow[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -379,13 +382,16 @@ export default function Jobs() {
         delivery_location: selectedCustomer.address_detail || "No address provided",
       };
 
-      const response = await apiFetch("/jobs", {
+      const response = await loadingDialog.withLoading(
+        apiFetch("/jobs", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify(payload),
-      });
+        }),
+        "กำลังสร้างงาน..."
+      );
 
       if (!response.ok) {
         const errorText = await response.text();
@@ -496,13 +502,16 @@ export default function Jobs() {
         delivery_location: selectedCustomer.address_detail || "No address provided",
       };
 
-      const response = await apiFetch(`/jobs/${jobId}`, {
+      const response = await loadingDialog.withLoading(
+        apiFetch(`/jobs/${jobId}`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify(payload),
-      });
+        }),
+        "กำลังบันทึกการแก้ไข..."
+      );
 
       if (!response.ok) {
         const errorText = await response.text();
@@ -596,9 +605,12 @@ export default function Jobs() {
       const jobId = jobs[editIndex].id;
       if (!jobId) return;
 
-      const response = await apiFetch(`/jobs/${jobId}`, {
-        method: "DELETE",
-      });
+      const response = await loadingDialog.withLoading(
+        apiFetch(`/jobs/${jobId}`, {
+          method: "DELETE",
+        }),
+        "กำลังลบงาน..."
+      );
 
       if (!response.ok) {
         let errorMessage = "Failed to delete job";
@@ -831,6 +843,7 @@ export default function Jobs() {
 
   return (
     <AppLayout>
+      <LoadingDialog isOpen={loadingDialog.isOpen} message={loadingDialog.message} />
       <div className="space-y-4">
         <div className="rounded-xl bg-gradient-to-r from-[hsl(var(--brand-start))] to-[hsl(var(--brand-end))] text-white p-6 shadow">
           <h1 className="text-2xl font-bold">Job Management</h1>
