@@ -24,6 +24,8 @@ import { LayoutGrid, Trash2, List, ArrowUpDown, Search } from "lucide-react";
 import { usePermissions } from "@/App";
 import NewItemBadge from "@/components/common/NewItemBadge";
 import { apiFetch } from "@/lib/api";
+import { LoadingDialog } from "@/components/common/LoadingDialog";
+import { useLoadingDialog } from "@/hooks/use-loading-dialog";
 
 // Interfaces สำหรับ API data
 interface Job {
@@ -261,6 +263,7 @@ const FormFields = ({
 export default function AddData() {
   const { canEdit } = usePermissions();
   const canEditPage = canEdit("/add-data");
+  const loadingDialog = useLoadingDialog({ message: "กำลังประมวลผล..." });
 
   // State สำหรับข้อมูล
   const [productionLogs, setProductionLogs] = useState<ProductionLog[]>([]);
@@ -428,13 +431,16 @@ export default function AddData() {
         employee_id: currentEmployeeId,
       };
 
-      const response = await apiFetch("/productionlogs", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(payload),
-      });
+      const response = await loadingDialog.withLoading(
+        apiFetch("/productionlogs", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(payload),
+        }),
+        "กำลังเพิ่มข้อมูล..."
+      );
 
       if (!response.ok) {
         const errorText = await response.text();
@@ -489,13 +495,16 @@ export default function AddData() {
         employee_id: productionLogs[editIdx].employee_id, // เก็บ employee เดิม
       };
 
-      const response = await apiFetch(`/productionlogs/${logId}`, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(payload),
-      });
+      const response = await loadingDialog.withLoading(
+        apiFetch(`/productionlogs/${logId}`, {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(payload),
+        }),
+        "กำลังบันทึกการแก้ไข..."
+      );
 
       if (!response.ok) {
         const errorText = await response.text();
@@ -520,9 +529,12 @@ export default function AddData() {
     try {
       const logId = productionLogs[editIdx].log_id;
 
-      const response = await apiFetch(`/productionlogs/${logId}`, {
-        method: "DELETE",
-      });
+      const response = await loadingDialog.withLoading(
+        apiFetch(`/productionlogs/${logId}`, {
+          method: "DELETE",
+        }),
+        "กำลังลบข้อมูล..."
+      );
 
       if (!response.ok) {
         const errorText = await response.text();
@@ -556,6 +568,7 @@ export default function AddData() {
 
   return (
     <AppLayout>
+      <LoadingDialog isOpen={loadingDialog.isOpen} message={loadingDialog.message} />
       <div className="space-y-4">
         <div className="rounded-xl bg-gradient-to-r from-[hsl(var(--brand-start))] to-[hsl(var(--brand-end))] text-white p-6 shadow">
           <h1 className="text-2xl font-bold">Production Data</h1>

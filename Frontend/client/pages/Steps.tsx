@@ -35,6 +35,8 @@ import { Plus, Pencil, Trash2, Settings } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { usePermissions } from "@/App";
 import { apiFetch } from "@/lib/api";
+import { LoadingDialog } from "@/components/common/LoadingDialog";
+import { useLoadingDialog } from "@/hooks/use-loading-dialog";
 
 interface Step {
   step_id: number;
@@ -51,6 +53,8 @@ const STEP_PRIORITY_PLACEHOLDER = "1 = ทำก่อน";
 export default function Steps() {
   const { canEdit } = usePermissions();
   const canEditPage = canEdit("/steps");
+
+  const loadingDialog = useLoadingDialog({ message: "กำลังประมวลผล..." });
 
   const [steps, setSteps] = useState<Step[]>([]);
   const [loading, setLoading] = useState(true);
@@ -123,17 +127,20 @@ export default function Steps() {
 
     try {
       setIsSubmitting(true);
-      const response = await apiFetch('/steps', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          step_name: stepName.trim(),
-          standard_time: parsedDailyCapacity,
-          priority: parsedPriority,
+      const response = await loadingDialog.withLoading(
+        apiFetch('/steps', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            step_name: stepName.trim(),
+            standard_time: parsedDailyCapacity,
+            priority: parsedPriority,
+          }),
         }),
-      });
+        'กำลังเพิ่มขั้นตอน...'
+      );
 
       if (!response.ok) {
         const errorText = await response.text();
@@ -194,17 +201,20 @@ export default function Steps() {
 
     try {
       setIsSubmitting(true);
-      const response = await apiFetch(`/steps/${editingStep.step_id}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          step_name: stepName.trim(),
-          standard_time: parsedDailyCapacity,
-          priority: parsedPriority,
+      const response = await loadingDialog.withLoading(
+        apiFetch(`/steps/${editingStep.step_id}`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            step_name: stepName.trim(),
+            standard_time: parsedDailyCapacity,
+            priority: parsedPriority,
+          }),
         }),
-      });
+        'กำลังบันทึกการแก้ไข...'
+      );
 
       if (!response.ok) {
         const errorText = await response.text();
@@ -238,9 +248,12 @@ export default function Steps() {
 
   const handleDeleteStep = async (step: Step) => {
     try {
-      const response = await apiFetch(`/steps/${step.step_id}`, {
-        method: 'DELETE',
-      });
+      const response = await loadingDialog.withLoading(
+        apiFetch(`/steps/${step.step_id}`, {
+          method: 'DELETE',
+        }),
+        'กำลังลบขั้นตอน...'
+      );
 
       if (!response.ok) {
         const errorData = await response.json();
@@ -313,6 +326,7 @@ export default function Steps() {
 
   return (
     <AppLayout>
+      <LoadingDialog isOpen={loadingDialog.isOpen} message={loadingDialog.message} />
       <div className="space-y-6">
         {/* Header */}
         <div className="rounded-xl bg-gradient-to-r from-[hsl(var(--brand-start))] to-[hsl(var(--brand-end))] text-white p-6 shadow">
