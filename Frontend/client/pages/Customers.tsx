@@ -378,7 +378,18 @@ export default function Customers() {
     return "border-slate-200 focus:ring-2 focus:ring-[hsl(var(--brand-start))]";
   };
 
+  if (loading) {
+      return (
+        <AppLayout>
+          <div className="flex items-center justify-center h-64">
+            <div className="text-slate-600">Loading jobs data...</div>
+          </div>
+        </AppLayout>
+      );
+    }
+    
   return (
+    
     <AppLayout>
       <LoadingDialog isOpen={loadingDialog.isOpen} message={loadingDialog.message} />
       <div className="space-y-4">
