@@ -116,7 +116,29 @@ export default function Customers() {
 
   // Fetch customers on mount
   useEffect(() => {
-    fetchCustomers();
+    (async () => {
+      const payload = apiFetch("/customers");
+      await loadingDialog.withLoading(payload, "กำลังโหลดข้อมูลลูกค้า...");
+      
+      try {
+        const response = await payload;
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const data = await response.json();
+        
+        const customers: Customer[] = data.map((c: any) => ({
+          id: c.customer_id,
+          name: c.fullname || "",
+          phone: c.phone || "",
+          email: c.email || "",
+          location: c.address_detail || "",
+          orders: c._count?.jobs || 0
+        }));
+        
+        setRows(customers);
+      } catch (error) {
+        console.error("Failed to fetch customers:", error);
+      }
+    })();
   }, []);
 
   const isValidDraft = useMemo(() => {
