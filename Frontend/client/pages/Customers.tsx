@@ -1,5 +1,7 @@
 import { useEffect, useState, useMemo } from "react";
 import AppLayout from "@/components/layout/Sidebar";
+import { LoadingDialog } from "@/components/common/LoadingDialog";
+import { useLoadingDialog } from "@/hooks/use-loading-dialog";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import {
@@ -32,6 +34,8 @@ type CustomerDraft = Omit<Customer, "id">;
 export default function Customers() {
   const { canEdit } = usePermissions();
   const canEditPage = canEdit("/customers");
+
+  const loadingDialog = useLoadingDialog();
 
   const [rows, setRows] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(false);
@@ -88,26 +92,28 @@ export default function Customers() {
 
   // แยก fetchCustomers ออกมาเป็น function แยก
   const fetchCustomers = async () => {
-    setLoading(true);
     try {
-      const response = await apiFetch("/customers");
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const data = await response.json();
-      
-      const customers: Customer[] = data.map((c: any) => ({
-        id: c.customer_id,
-        name: c.fullname || "",
-        phone: c.phone || "",
-        email: c.email || "",
-        location: c.address_detail || "",
-        orders: c._count?.jobs || 0  // ใช้ข้อมูลจาก API
-      }));
-      
-      setRows(customers);
+      await loadingDialog.withLoading(
+        (async () => {
+          const response = await apiFetch("/customers");
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          const data = await response.json();
+
+          const customers: Customer[] = data.map((c: any) => ({
+            id: c.customer_id,
+            name: c.fullname || "",
+            phone: c.phone || "",
+            email: c.email || "",
+            location: c.address_detail || "",
+            orders: c._count?.jobs || 0,
+          }));
+
+          setRows(customers);
+        })(),
+        "กำลังโหลดลูกค้า..."
+      );
     } catch (error) {
       console.error("Failed to fetch customers:", error);
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -138,44 +144,51 @@ export default function Customers() {
     }
 
     try {
-      const payload = {
-        fullname: draft.name.trim(),
-        email: draft.email.trim(),
-        phone: draft.phone.trim(),
-        address_detail: draft.location.trim()
-      };
+      await loadingDialog.withLoading(
+        (async () => {
+          const payload = {
+            fullname: draft.name.trim(),
+            email: draft.email.trim(),
+            phone: draft.phone.trim(),
+            address_detail: draft.location.trim(),
+          };
 
-      const response = await apiFetch("/customers", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(payload),
-      });
+          const response = await apiFetch("/customers", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(payload),
+          });
 
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-      
-      const newCustomer = await response.json();
-      
-      // เพิ่มลูกค้าใหม่ในรายการ
-      setRows((current) => [...current, {
-        id: newCustomer.customer_id,
-        name: newCustomer.fullname,
-        phone: newCustomer.phone || "",
-        email: newCustomer.email || "",
-        location: newCustomer.address_detail || "",
-        orders: newCustomer._count?.jobs || 0  // ใช้ข้อมูลจาก API
-      }]);
-      
-      setOpen(false);
-      setDraft({ name: "", phone: "", email: "", location: "", orders: 0 });
-      
-      toast({
-        title: "เพิ่มลูกค้าเรียบร้อย",
-        description: `เพิ่มลูกค้า "${newCustomer.fullname}" เข้าสู่ระบบแล้ว`,
-      });
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+          }
+
+          const newCustomer = await response.json();
+
+          setRows((current) => [
+            ...current,
+            {
+              id: newCustomer.customer_id,
+              name: newCustomer.fullname,
+              phone: newCustomer.phone || "",
+              email: newCustomer.email || "",
+              location: newCustomer.address_detail || "",
+              orders: newCustomer._count?.jobs || 0,
+            },
+          ]);
+
+          setOpen(false);
+          setDraft({ name: "", phone: "", email: "", location: "", orders: 0 });
+
+          toast({
+            title: "เพิ่มลูกค้าเรียบร้อย",
+            description: `เพิ่มลูกค้า "${newCustomer.fullname}" เข้าสู่ระบบแล้ว`,
+          });
+        })(),
+        "กำลังเพิ่มลูกค้า..."
+      );
     } catch (error) {
       console.error("Failed to add customer:", error);
       toast({
@@ -218,46 +231,50 @@ export default function Customers() {
     }
     
     try {
-      const response = await apiFetch(`/customers/${editDraft.id}`, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          fullname: editDraft.name.trim(),
-          phone: editDraft.phone.trim(),
-          email: editDraft.email.trim(),
-          address_detail: editDraft.location.trim(),
-        }),
-      });
+      await loadingDialog.withLoading(
+        (async () => {
+          const response = await apiFetch(`/customers/${editDraft.id}`, {
+            method: "PUT",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              fullname: editDraft.name.trim(),
+              phone: editDraft.phone.trim(),
+              email: editDraft.email.trim(),
+              address_detail: editDraft.location.trim(),
+            }),
+          });
 
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      
-      const updatedCustomer = await response.json();
-      
-      // ใช้ editDraft.id แทน editIndex เพื่อหา customer ที่ถูกต้อง
-      setRows((current) =>
-        current.map((row) =>
-          row.id === editDraft.id
-            ? {
-                ...row,
-                name: updatedCustomer.fullname || "",
-                phone: updatedCustomer.phone || "",
-                email: updatedCustomer.email || "",
-                location: updatedCustomer.address_detail || "",
-                orders: updatedCustomer._count?.jobs || row.orders,
-              }
-            : row
-        )
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+          const updatedCustomer = await response.json();
+
+          setRows((current) =>
+            current.map((row) =>
+              row.id === editDraft.id
+                ? {
+                    ...row,
+                    name: updatedCustomer.fullname || "",
+                    phone: updatedCustomer.phone || "",
+                    email: updatedCustomer.email || "",
+                    location: updatedCustomer.address_detail || "",
+                    orders: updatedCustomer._count?.jobs || row.orders,
+                  }
+                : row
+            )
+          );
+
+          setEditIndex(null);
+          setEditDraft({ id: 0, name: "", phone: "", email: "", location: "", orders: 0 });
+
+          toast({
+            title: "แก้ไขข้อมูลเรียบร้อย",
+            description: `อัปเดตข้อมูลลูกค้า "${updatedCustomer.fullname}" เรียบร้อยแล้ว`,
+          });
+        })(),
+        "กำลังบันทึกการแก้ไข..."
       );
-      
-      setEditIndex(null);
-      setEditDraft({ id: 0, name: "", phone: "", email: "", location: "", orders: 0 });
-      
-      toast({
-        title: "แก้ไขข้อมูลเรียบร้อย",
-        description: `อัปเดตข้อมูลลูกค้า "${updatedCustomer.fullname}" เรียบร้อยแล้ว`,
-      });
     } catch (error) {
       console.error("Failed to update customer:", error);
       toast({
@@ -277,35 +294,40 @@ export default function Customers() {
     if (!customerToDelete) return;
 
     try {
-      const response = await apiFetch(`/customers/${customerToDelete.id}`, {
-        method: "DELETE",
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        if (response.status === 400) {
-          toast({
-            variant: "destructive",
-            title: "ไม่สามารถลบลูกค้าได้",
-            description: errorData.details || errorData.message || "มีงานที่เชื่อมโยงกับลูกค้านี้อยู่",
+      await loadingDialog.withLoading(
+        (async () => {
+          const response = await apiFetch(`/customers/${customerToDelete.id}`, {
+            method: "DELETE",
           });
+
+          if (!response.ok) {
+            const errorData = await response.json();
+            if (response.status === 400) {
+              toast({
+                variant: "destructive",
+                title: "ไม่สามารถลบลูกค้าได้",
+                description: errorData.details || errorData.message || "มีงานที่เชื่อมโยงกับลูกค้านี้อยู่",
+              });
+              setDeleteDialogOpen(false);
+              setCustomerToDelete(null);
+              return;
+            }
+            throw new Error(`HTTP ${response.status}`);
+          }
+
+          setRows((current) => current.filter((row) => row.id !== customerToDelete.id));
+          setEditIndex(null);
+          setEditDraft({ id: 0, name: "", phone: "", email: "", location: "", orders: 0 });
           setDeleteDialogOpen(false);
           setCustomerToDelete(null);
-          return;
-        }
-        throw new Error(`HTTP ${response.status}`);
-      }
-      
-      setRows((current) => current.filter((row) => row.id !== customerToDelete.id));
-      setEditIndex(null);
-      setEditDraft({ id: 0, name: "", phone: "", email: "", location: "", orders: 0 });
-      setDeleteDialogOpen(false);
-      setCustomerToDelete(null);
-      
-      toast({
-        title: "ลบลูกค้าเรียบร้อย",
-        description: "ข้อมูลลูกค้าถูกลบออกจากระบบแล้ว",
-      });
+
+          toast({
+            title: "ลบลูกค้าเรียบร้อย",
+            description: "ข้อมูลลูกค้าถูกลบออกจากระบบแล้ว",
+          });
+        })(),
+        "กำลังลบลูกค้า..."
+      );
     } catch (error) {
       console.error("Failed to delete customer:", error);
       toast({
@@ -368,6 +390,7 @@ export default function Customers() {
 
   return (
     <AppLayout>
+      <LoadingDialog isOpen={loadingDialog.isOpen} message={loadingDialog.message} />
       <div className="space-y-4">
         <div className="rounded-xl bg-gradient-to-r from-[hsl(var(--brand-start))] to-[hsl(var(--brand-end))] text-white p-6 shadow"><h1 className="text-2xl font-bold">Customers</h1></div>
         <div className="rounded-lg border bg-white p-4">
