@@ -135,8 +135,21 @@ export default function Transportation() {
   const [searchQuery, setSearchQuery] = useState("");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
   const [compactList, setCompactList] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    const userStr = localStorage.getItem("user");
+    if (userStr) {
+      try {
+        const user = JSON.parse(userStr);
+        if (user.id) {
+          setCurrentEmployeeId(user.id); // user.id คือ employee_id
+        }
+      } catch (e) {
+        console.error("Failed to parse user:", e);
+        setError("Failed to get user information");
+      }
+    }
     const fetchData = async () => {
       try {
         setLoading(true);
