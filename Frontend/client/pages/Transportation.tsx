@@ -33,6 +33,7 @@ import {
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import NewShipmentBadge from "@/components/transportation/NewShipmentBadge";
 import { apiFetch } from "@/lib/api";
+import { usePermissions } from "@/App";
 
 interface Customer {
   customer_id: number;
@@ -104,6 +105,9 @@ interface Shipment {
 }
 
 export default function Transportation() {
+  const { canEdit } = usePermissions();
+  const canEditPage = canEdit("/transportation");
+  const [currentEmployeeId, setCurrentEmployeeId] = useState<number | null>(null);
   const [open, setOpen] = useState(false);
   const [shipments, setShipments] = useState<Shipment[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -530,7 +534,7 @@ export default function Transportation() {
             <div className="flex items-center gap-3">
               <Dialog open={open} onOpenChange={setOpen}>
                 <DialogTrigger asChild>
-                  <Button className="bg-white/10 hover:bg-white/20 text-white border-white/20">
+                  <Button className="bg-white/10 hover:bg-white/20 text-white border-white/20" disabled={!canEditPage || !currentEmployeeId}>
                     <Plus className="h-4 w-4 mr-2" />
                     เพิ่มการจัดส่ง
                   </Button>
