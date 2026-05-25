@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/dialog";
 import { Truck, Edit2, Trash2, X } from "lucide-react";
 import { apiFetch } from "@/lib/api";
+import { usePermissions } from "@/App";
 
 interface Customer {
   customer_id: number;
@@ -78,6 +79,9 @@ interface Shipment {
 }
 
 export default function TransportationDetail() {
+  const { canEdit } = usePermissions();
+  const canEditPage = canEdit("/transportation");
+  const [currentEmployeeId, setCurrentEmployeeId] = useState<number | null>(null);
   const { shipmentId } = useParams<{ shipmentId: string }>();
   const location = useLocation();
   const navigate = useNavigate();
@@ -536,7 +540,7 @@ export default function TransportationDetail() {
               </div>
               <Button
                 onClick={handleSaveActualDeliveryDate}
-                disabled={isSubmitting}
+                disabled={!canEditPage || !currentEmployeeId || isSubmitting}
               >
                 {isSubmitting ? "กำลังบันทึก..." : "บันทึกวันถึงจริง"}
               </Button>
@@ -556,7 +560,7 @@ export default function TransportationDetail() {
               <Button
                 onClick={handleStartEdit}
                 className="gap-2"
-                disabled={isSubmitting}
+                disabled={!canEditPage || !currentEmployeeId || isSubmitting}
               >
                 <Edit2 className="h-4 w-4" />
                 แก้ไขวันที่
@@ -565,7 +569,7 @@ export default function TransportationDetail() {
                 variant="destructive"
                 onClick={() => setShowDeleteDialog(true)}
                 className="gap-2"
-                disabled={isSubmitting}
+                disabled={!canEditPage || !currentEmployeeId || isSubmitting}
               >
                 <Trash2 className="h-4 w-4" />
                 ลบ
