@@ -1038,14 +1038,6 @@ export default function Jobs() {
             <div className="flex items-center gap-2">
               <Button
                 type="button"
-                variant={compactList ? "default" : "outline"}
-                onClick={() => setCompactList((current) => !current)}
-              >
-                <List className="mr-2 h-4 w-4" />
-                {compactList ? "Detailed List" : "List"}
-              </Button>
-              <Button
-                type="button"
                 variant="outline"
                 onClick={() =>
                   setSort((current) => ({
