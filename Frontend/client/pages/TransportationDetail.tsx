@@ -102,6 +102,7 @@ export default function TransportationDetail() {
   const [actualDeliveryInput, setActualDeliveryInput] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchDetail = async () => {
@@ -165,6 +166,18 @@ export default function TransportationDetail() {
 
   // Fetch job steps when job_id changes
   useEffect(() => {
+    const userStr = localStorage.getItem("user");
+    if (userStr) {
+      try {
+        const user = JSON.parse(userStr);
+        if (user.id) {
+          setCurrentEmployeeId(user.id); // user.id คือ employee_id
+        }
+      } catch (e) {
+        console.error("Failed to parse user:", e);
+        setError("Failed to get user information");
+      }
+    }
     if (shipment?.job_id) {
       const fetchJobSteps = async () => {
         try {
