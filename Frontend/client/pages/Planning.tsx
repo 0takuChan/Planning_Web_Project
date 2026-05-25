@@ -10,7 +10,16 @@ import { apiFetch } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { List, ArrowUpDown, Search, Sparkles, AlertTriangle, CheckCircle2, Info } from "lucide-react";
-import NewItemBadge, { isRecentDate } from "@/components/common/NewItemBadge";
+import NewItemBadge from "@/components/common/NewItemBadge";
+
+const AUTO_PLAN_MARKER_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+function isRecentDate(createdAt?: string | null, maxAgeMs = AUTO_PLAN_MARKER_MAX_AGE_MS): boolean {
+  if (!createdAt) return false;
+  const t = Date.parse(createdAt);
+  if (Number.isNaN(t)) return false;
+  return Date.now() - t <= maxAgeMs;
+}
 
 interface Job {
   job_id: number;
