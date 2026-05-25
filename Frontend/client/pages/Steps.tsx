@@ -221,7 +221,11 @@ export default function Steps() {
         throw new Error(`HTTP error! status: ${response.status}, message: ${errorText}`);
       }
 
-      const updatedStep = await response.json();
+      const responseData = await response.json();
+      const updatedStep = responseData.updatedStep ?? responseData;
+      const deletedCount = responseData.deletedPlannings ?? 0;
+      const replanResults: { job_id: number; success: boolean; message?: string }[] = responseData.replanResults ?? [];
+
       setSteps(steps.map(step => 
         step.step_id === editingStep.step_id ? updatedStep : step
       ));
@@ -230,10 +234,20 @@ export default function Steps() {
       setStepPriority("1");
       setEditingStep(null);
       setIsEditDialogOpen(false);
-      toast({
-        title: "Success",
-        description: "Step updated successfully",
-      });
+      if (deletedCount > 0) {
+        const successCount = replanResults.filter(r => r.success).length;
+        const failCount = replanResults.length - successCount;
+        toast({
+          title: "Step updated",
+          description: `แก้ไขเวลาทำงานแล้ว ลบการวางแผน ${deletedCount} รายการ จากนั้นสร้างแผนใหม่สำเร็จ ${successCount}${failCount ? `, ล้มเหลว ${failCount}` : ''} รายการ`,
+        });
+        if (failCount > 0) console.warn('Replan failures:', replanResults.filter(r => !r.success));
+      } else {
+        toast({
+          title: "Success",
+          description: "Step updated successfully",
+        });
+      }
     } catch (error) {
       console.error("Error updating step:", error);
       toast({

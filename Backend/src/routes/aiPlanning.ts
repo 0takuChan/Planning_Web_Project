@@ -434,7 +434,7 @@ async function createPlanningRecords(planningPairs: PlanningCreateItem[]) {
  */
 router.post("/auto-plan", async (req: Request, res: Response) => {
   try {
-    const { job_id } = req.body;
+    const { job_id, onlyFromToday } = req.body as { job_id: number; onlyFromToday?: boolean };
 
     // Validate input
     if (!job_id || !Number.isInteger(job_id)) {
@@ -488,10 +488,10 @@ router.post("/auto-plan", async (req: Request, res: Response) => {
     }
 
     const dueDateString = formatLocalDate(job.end_date);
-    const todayString = formatLocalDate(new Date());
+    const todayStringAuto = formatLocalDate(new Date());
     const stepIds = [...new Set(jobSteps.map((jobStep) => jobStep.step_id))];
 
-    const existingStepMinutesByDate = await getExistingStepMinutesByDate(stepIds, todayString, undefined, [job_id]);
+    const existingStepMinutesByDate = await getExistingStepMinutesByDate(stepIds, todayStringAuto, undefined, [job_id]);
 
     const jobStepsWithRemaining: JobStepWithRemaining[] = jobSteps
       .map((js) => ({
@@ -529,10 +529,19 @@ router.post("/auto-plan", async (req: Request, res: Response) => {
       });
     }
 
-    const clearedExistingPlans = await prisma.planning.deleteMany({
-      where: { job_id },
-    });
-    debugLog(`[AUTO-PLAN API] Cleared ${clearedExistingPlans.count} existing planning records for job ${job.job_number} before saving the regenerated plan`);
+    // Clear existing future plans for this job depending on flag.
+    let clearedExistingPlans;
+    if (onlyFromToday) {
+      clearedExistingPlans = await prisma.planning.deleteMany({
+        where: { job_id, planned_date: { gte: parseDateOnlyUtc(todayStringAuto) } },
+      });
+      debugLog(`[AUTO-PLAN API] Cleared ${clearedExistingPlans.count} existing planning records for job ${job.job_number} from ${todayStringAuto} onwards before saving the regenerated plan`);
+    } else {
+      clearedExistingPlans = await prisma.planning.deleteMany({
+        where: { job_id },
+      });
+      debugLog(`[AUTO-PLAN API] Cleared ${clearedExistingPlans.count} existing planning records for job ${job.job_number} before saving the regenerated plan`);
+    }
 
     const { createdPlannings, successCount, skippedCount } = await createPlanningRecords(
       planningPairs.map((pair: PlanningPair) => ({
@@ -573,7 +582,7 @@ router.post("/auto-plan-batch", async (req: Request, res: Response) => {
     }
 
     const uniqueJobIds = [...new Set(job_ids)];
-    const todayString = formatLocalDate(new Date());
+    const todayStringBatch = formatLocalDate(new Date());
 
     const [jobs, jobSteps] = await Promise.all([
       prisma.job.findMany({
@@ -599,8 +608,8 @@ router.post("/auto-plan-batch", async (req: Request, res: Response) => {
     const maxDueDate = jobs.reduce((latest, job) => {
       const jobDate = formatLocalDate(job.end_date);
       return jobDate > latest ? jobDate : latest;
-    }, todayString);
-    const existingStepMinutesByDate = await getExistingStepMinutesByDate(stepIds, todayString, undefined, uniqueJobIds);
+    }, todayStringBatch);
+    const existingStepMinutesByDate = await getExistingStepMinutesByDate(stepIds, todayStringBatch, undefined, uniqueJobIds);
 
     const failedJobs: string[] = [];
     const batchJobs: BatchJobPlanningInput[] = [];

@@ -1,4 +1,5 @@
 import express, { Request, Response } from "express";
+import jwt from "jsonwebtoken";
 import { PrismaClient, Step } from "@prisma/client";
 
 const router = express.Router();
@@ -111,6 +112,80 @@ router.put("/:id", async (req: Request<{ id: string }, {}, CreateStepBody>, res:
 
     if (!existingStep) {
       return res.status(404).json({ error: "ไม่พบ Step นี้" });
+    }
+
+    const stepId = parseInt(id, 10);
+
+    // If standard_time changed, remove future plannings for related job_steps
+    const standardTimeChanged = existingStep.standard_time !== standard_time;
+
+    if (standardTimeChanged) {
+      // find related job_step ids
+      const relatedJobSteps = await prisma.jobStep.findMany({
+        where: { step_id: stepId },
+        select: { job_step_id: true },
+      });
+
+      const jobStepIds = relatedJobSteps.map(js => js.job_step_id);
+
+      // compute today's date (midnight) for comparison
+      const todayStr = new Date().toISOString().split('T')[0];
+      const todayDate = new Date(todayStr);
+
+      // run update and deletions in a transaction
+      const [updatedStep, deleteResult] = await prisma.$transaction([
+        prisma.step.update({
+          where: { step_id: stepId },
+          data: { step_name, standard_time, priority: parsedPriority },
+        }),
+        prisma.planning.deleteMany({
+          where: {
+            job_step_id: { in: jobStepIds.length ? jobStepIds : [-1] },
+            planned_date: { gte: todayDate },
+          },
+        }),
+      ]);
+
+      // After deletion, attempt to auto-generate plans for affected jobs
+      const affectedJobSteps = await prisma.jobStep.findMany({
+        where: { step_id: stepId },
+        select: { job_id: true },
+      });
+
+      const affectedJobIds = [...new Set(affectedJobSteps.map(js => js.job_id))];
+
+      const replanResults: Array<{ job_id: number; success: boolean; message?: string }> = [];
+
+      if (affectedJobIds.length > 0) {
+        const fetch = (await import('node-fetch-native')).default;
+        const basePort = process.env.PORT || '4000';
+        const baseUrl = `http://localhost:${basePort}`;
+        const JWT_SECRET = process.env.JWT_SECRET || 'mysecretkey';
+        const token = jwt.sign({ id: 0, username: 'system', role: 'system' }, JWT_SECRET, { expiresIn: '5m' });
+
+        for (const jobId of affectedJobIds) {
+          try {
+            const resp = await fetch(`${baseUrl}/api/plannings/auto-plan`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+              body: JSON.stringify({ job_id: jobId, onlyFromToday: true }),
+            });
+
+            if (!resp.ok) {
+              const errBody = await resp.text();
+              replanResults.push({ job_id: jobId, success: false, message: `Auto-plan failed: ${resp.status} ${errBody}` });
+              continue;
+            }
+
+            const body = await resp.json();
+            replanResults.push({ job_id: jobId, success: true, message: body.message });
+          } catch (err: any) {
+            replanResults.push({ job_id: jobId, success: false, message: err?.message ?? String(err) });
+          }
+        }
+      }
+
+      return res.json({ updatedStep, deletedPlannings: deleteResult.count, replanResults });
     }
 
     const updatedStep = await prisma.step.update({

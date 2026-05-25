@@ -431,6 +431,41 @@ export default function Planning() {
     return () => window.clearInterval(pruneInterval);
   }, []);
 
+  // Listen for auto-planning creations triggered elsewhere (e.g., step edit)
+  useEffect(() => {
+    const handler = (ev: Event) => {
+      try {
+        // @ts-ignore custom event
+        const detail = (ev as CustomEvent)?.detail;
+        const created: number[] = Array.isArray(detail?.createdPlanningIds) ? detail.createdPlanningIds : [];
+        if (created.length === 0) return;
+
+        setNewAutoPlanningMarkers((prev) => {
+          const next = { ...prev } as AutoPlanningMarkerMap;
+          const now = new Date().toISOString();
+          for (const id of created) {
+            next[String(id)] = now;
+          }
+          if (typeof window !== 'undefined') {
+            window.localStorage.setItem(AUTO_PLAN_NEW_MARKERS_STORAGE_KEY, JSON.stringify(next));
+          }
+          return next;
+        });
+        // Refresh plannings so newly-created planning records are loaded into state
+        try {
+          refreshPlanningState();
+        } catch (err) {
+          console.warn('Failed to refresh planning state after auto-plannings-updated', err);
+        }
+      } catch (err) {
+        console.warn('Failed to handle auto-plannings-updated event', err);
+      }
+    };
+
+    window.addEventListener('auto-plannings-updated', handler as EventListener);
+    return () => window.removeEventListener('auto-plannings-updated', handler as EventListener);
+  }, []);
+
   // Fetch data from API
   useEffect(() => {
     const fetchData = async () => {
