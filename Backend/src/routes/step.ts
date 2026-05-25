@@ -149,38 +149,43 @@ router.put("/:id", async (req: Request<{ id: string }, {}, CreateStepBody>, res:
       // After deletion, attempt to auto-generate plans for affected jobs
       const affectedJobSteps = await prisma.jobStep.findMany({
         where: { step_id: stepId },
-        select: { job_id: true },
+        select: { job_id: true, job_step_id: true },
       });
 
-      const affectedJobIds = [...new Set(affectedJobSteps.map(js => js.job_id))];
+      const jobStepsByJob = new Map<number, number[]>();
+      for (const js of affectedJobSteps) {
+        jobStepsByJob.set(js.job_id, (jobStepsByJob.get(js.job_id) || []).concat(js.job_step_id));
+      }
 
-      const replanResults: Array<{ job_id: number; success: boolean; message?: string }> = [];
+      const replanResults: Array<{ job_id: number; job_step_id: number; success: boolean; message?: string }> = [];
 
-      if (affectedJobIds.length > 0) {
+      if (jobStepsByJob.size > 0) {
         const fetch = (await import('node-fetch-native')).default;
         const basePort = process.env.PORT || '4000';
         const baseUrl = `http://localhost:${basePort}`;
         const JWT_SECRET = process.env.JWT_SECRET || 'mysecretkey';
         const token = jwt.sign({ id: 0, username: 'system', role: 'system' }, JWT_SECRET, { expiresIn: '5m' });
 
-        for (const jobId of affectedJobIds) {
-          try {
-            const resp = await fetch(`${baseUrl}/api/plannings/auto-plan`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-              body: JSON.stringify({ job_id: jobId, onlyFromToday: true }),
-            });
+        for (const [jobId, jobStepIds] of jobStepsByJob.entries()) {
+          for (const jobStepId of jobStepIds) {
+            try {
+              const resp = await fetch(`${baseUrl}/api/plannings/auto-plan`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                body: JSON.stringify({ job_id: jobId, job_step_id: jobStepId, onlyFromToday: true }),
+              });
 
-            if (!resp.ok) {
-              const errBody = await resp.text();
-              replanResults.push({ job_id: jobId, success: false, message: `Auto-plan failed: ${resp.status} ${errBody}` });
-              continue;
+              if (!resp.ok) {
+                const errBody = await resp.text();
+                replanResults.push({ job_id: jobId, job_step_id: jobStepId, success: false, message: `Auto-plan failed: ${resp.status} ${errBody}` });
+                continue;
+              }
+
+              const body = await resp.json();
+              replanResults.push({ job_id: jobId, job_step_id: jobStepId, success: true, message: body.message });
+            } catch (err: any) {
+              replanResults.push({ job_id: jobId, job_step_id: jobStepId, success: false, message: err?.message ?? String(err) });
             }
-
-            const body = await resp.json();
-            replanResults.push({ job_id: jobId, success: true, message: body.message });
-          } catch (err: any) {
-            replanResults.push({ job_id: jobId, success: false, message: err?.message ?? String(err) });
           }
         }
       }

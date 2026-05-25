@@ -434,7 +434,7 @@ async function createPlanningRecords(planningPairs: PlanningCreateItem[]) {
  */
 router.post("/auto-plan", async (req: Request, res: Response) => {
   try {
-    const { job_id, onlyFromToday } = req.body as { job_id: number; onlyFromToday?: boolean };
+    const { job_id, job_step_id, onlyFromToday } = req.body as { job_id: number; job_step_id?: number; onlyFromToday?: boolean };
 
     // Validate input
     if (!job_id || !Number.isInteger(job_id)) {
@@ -457,43 +457,44 @@ router.post("/auto-plan", async (req: Request, res: Response) => {
       });
     }
 
-    // Fetch all JobSteps for this job with Step details (including standard_time)
-    const jobSteps = await prisma.jobStep.findMany({
-      where: { job_id },
-      include: {
-        step: true,
-      },
-    });
-
-    if (jobSteps.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: `Job ${job.job_number} has no steps configured`,
-      });
-    }
-
-    // Validate that all steps have minutes_per_unit configured
-    const stepsWithoutMinutes = jobSteps.filter(
-      (js) => js.minutes_per_unit === null || js.minutes_per_unit === undefined
-    );
-
-    if (stepsWithoutMinutes.length > 0) {
-      const stepNames = stepsWithoutMinutes
-        .map((js) => js.step.step_name)
-        .join(", ");
-      return res.status(400).json({
-        success: false,
-        message: `Steps missing minutes_per_unit configuration: ${stepNames}`,
-      });
-    }
-
+    // Optionally allow re-planning only a single job_step for this job.
     const dueDateString = formatLocalDate(job.end_date);
     const todayStringAuto = formatLocalDate(new Date());
-    const stepIds = [...new Set(jobSteps.map((jobStep) => jobStep.step_id))];
 
+    // If job_step_id provided, load just that job step and limit deletion/creation to it.
+    let jobStepsForPlanning: { job_step_id: number; step_id: number; minutes_per_unit: number | null; step: { step_name: string; standard_time: number; priority: number } }[] = [];
+
+    if (job_step_id !== undefined && job_step_id !== null) {
+      if (!Number.isInteger(job_step_id)) {
+        return res.status(400).json({ success: false, message: "Invalid job_step_id" });
+      }
+
+      const singleJobStep = await prisma.jobStep.findFirst({ where: { job_step_id, job_id }, include: { step: true } });
+      if (!singleJobStep) {
+        return res.status(404).json({ success: false, message: `Job step ${job_step_id} not found for job ${job.job_number}` });
+      }
+
+      jobStepsForPlanning = [singleJobStep];
+    } else {
+      // Fetch all JobSteps for this job with Step details (including standard_time)
+      jobStepsForPlanning = await prisma.jobStep.findMany({ where: { job_id }, include: { step: true } });
+    }
+
+    if (jobStepsForPlanning.length === 0) {
+      return res.status(400).json({ success: false, message: `Job ${job.job_number} has no steps configured` });
+    }
+
+    // Validate that steps to be planned have minutes_per_unit configured
+    const stepsWithoutMinutes = jobStepsForPlanning.filter((js) => js.minutes_per_unit === null || js.minutes_per_unit === undefined);
+    if (stepsWithoutMinutes.length > 0) {
+      const stepNames = stepsWithoutMinutes.map((js) => js.step.step_name).join(", ");
+      return res.status(400).json({ success: false, message: `Steps missing minutes_per_unit configuration: ${stepNames}` });
+    }
+
+    const stepIds = [...new Set(jobStepsForPlanning.map((jobStep) => jobStep.step_id))];
     const existingStepMinutesByDate = await getExistingStepMinutesByDate(stepIds, todayStringAuto, undefined, [job_id]);
 
-    const jobStepsWithRemaining: JobStepWithRemaining[] = jobSteps
+    const jobStepsWithRemaining: JobStepWithRemaining[] = jobStepsForPlanning
       .map((js) => ({
         job_step_id: js.job_step_id,
         step_id: js.step_id,
@@ -506,20 +507,12 @@ router.post("/auto-plan", async (req: Request, res: Response) => {
       .filter((jobStep) => jobStep.remaining_quantity > 0);
 
     if (jobStepsWithRemaining.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: `${job.job_number} is already fully planned`,
-      });
+      return res.status(400).json({ success: false, message: `${job.job_number} is already fully planned` });
     }
 
     // Call Gemini planning service
     debugLog("\n[AUTO-PLAN API] Calling generateAutoPlan service...");
-    const planningPairs = await generateAutoPlan(
-      job.job_number,
-      dueDateString,
-      jobStepsWithRemaining,
-      existingStepMinutesByDate
-    );
+    const planningPairs = await generateAutoPlan(job.job_number, dueDateString, jobStepsWithRemaining, existingStepMinutesByDate);
     debugLog(`[AUTO-PLAN API] Service returned ${planningPairs.length} planning pairs\n`);
 
     if (planningPairs.length === 0) {
@@ -529,18 +522,28 @@ router.post("/auto-plan", async (req: Request, res: Response) => {
       });
     }
 
-    // Clear existing future plans for this job depending on flag.
+    // Clear existing plans. If job_step_id provided, only delete planning records for that step; otherwise delete by job.
     let clearedExistingPlans;
-    if (onlyFromToday) {
-      clearedExistingPlans = await prisma.planning.deleteMany({
-        where: { job_id, planned_date: { gte: parseDateOnlyUtc(todayStringAuto) } },
-      });
-      debugLog(`[AUTO-PLAN API] Cleared ${clearedExistingPlans.count} existing planning records for job ${job.job_number} from ${todayStringAuto} onwards before saving the regenerated plan`);
+    if (job_step_id !== undefined && job_step_id !== null) {
+      if (onlyFromToday) {
+        clearedExistingPlans = await prisma.planning.deleteMany({
+          where: { job_id, job_step_id, planned_date: { gte: parseDateOnlyUtc(todayStringAuto) } },
+        });
+        debugLog(`[AUTO-PLAN API] Cleared ${clearedExistingPlans.count} existing planning records for job ${job.job_number} step ${job_step_id} from ${todayStringAuto} onwards before saving regenerated step plan`);
+      } else {
+        clearedExistingPlans = await prisma.planning.deleteMany({ where: { job_id, job_step_id } });
+        debugLog(`[AUTO-PLAN API] Cleared ${clearedExistingPlans.count} existing planning records for job ${job.job_number} step ${job_step_id} before saving regenerated step plan`);
+      }
     } else {
-      clearedExistingPlans = await prisma.planning.deleteMany({
-        where: { job_id },
-      });
-      debugLog(`[AUTO-PLAN API] Cleared ${clearedExistingPlans.count} existing planning records for job ${job.job_number} before saving the regenerated plan`);
+      if (onlyFromToday) {
+        clearedExistingPlans = await prisma.planning.deleteMany({
+          where: { job_id, planned_date: { gte: parseDateOnlyUtc(todayStringAuto) } },
+        });
+        debugLog(`[AUTO-PLAN API] Cleared ${clearedExistingPlans.count} existing planning records for job ${job.job_number} from ${todayStringAuto} onwards before saving the regenerated plan`);
+      } else {
+        clearedExistingPlans = await prisma.planning.deleteMany({ where: { job_id } });
+        debugLog(`[AUTO-PLAN API] Cleared ${clearedExistingPlans.count} existing planning records for job ${job.job_number} before saving the regenerated plan`);
+      }
     }
 
     const { createdPlannings, successCount, skippedCount } = await createPlanningRecords(
