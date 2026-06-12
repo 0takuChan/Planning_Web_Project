@@ -1,4 +1,4 @@
-# Planning Web Project
+# Garment Production Planning System 
 
 ระบบวางแผนการผลิตและจัดการงาน (Production Planning & Management System)
 
